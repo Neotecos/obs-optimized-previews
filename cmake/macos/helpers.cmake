@@ -77,6 +77,8 @@ function(target_install_resources target)
   message(DEBUG "Installing resources for target ${target}...")
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data")
     file(GLOB_RECURSE data_files "${CMAKE_CURRENT_SOURCE_DIR}/data/*")
+    # Finder crea .DS_Store en cualquier carpeta; no deben acabar en el bundle.
+    list(FILTER data_files EXCLUDE REGEX "/\\.DS_Store$")
     foreach(data_file IN LISTS data_files)
       cmake_path(
         RELATIVE_PATH
