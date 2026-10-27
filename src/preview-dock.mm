@@ -25,6 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QContextMenuEvent>
 #include <QMenu>
 
+#include <algorithm>
+
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 
@@ -46,6 +48,7 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 	CATextLayer *_messageLayer;
 	IOSurfaceRef _current;
 	uint64_t _seenSerial;
+	uint64_t _lastFrameTime;
 	uint64_t _pendingSize;
 	uint64_t _sentSize;
 	CFTimeInterval _pendingSince;
@@ -261,8 +264,11 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 
 	IOSurfaceRef next = nullptr;
 	uint64_t frameTime = 0;
+	uint64_t superseded = 0;
 	os_unfair_lock_lock(&_shared->lock);
 	if (_shared->latestSerial != _seenSerial) {
+		if (_seenSerial && _shared->latestSerial - _seenSerial > 1)
+			superseded = _shared->latestSerial - _seenSerial - 1;
 		_seenSerial = _shared->latestSerial;
 		next = _shared->latest;
 		frameTime = _shared->latestFrameTime;
@@ -279,6 +285,17 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 	const uint64_t now = os_gettime_ns();
 	if (frameTime && now > frameTime)
 		_shared->recordLatency(now - frameTime);
+
+	/* Huecos según el tiempo de vídeo de los fotogramas mostrados: con 60 FPS
+	 * deberían ir de 16,7 en 16,7 ms (o según el límite de FPS elegido). */
+	const uint64_t interval = obs_get_frame_interval_ns();
+	const uint32_t limit = _shared->fpsLimit.load(std::memory_order_relaxed);
+	const uint64_t expected = limit ? std::max<uint64_t>(interval, 1000000000ULL / limit) : interval;
+	if (_lastFrameTime && frameTime > _lastFrameTime && (frameTime - _lastFrameTime) * 2 > expected * 3)
+		_shared->presentGaps.fetch_add(1, std::memory_order_relaxed);
+	_lastFrameTime = frameTime;
+	_shared->framesSuperseded.fetch_add(superseded, std::memory_order_relaxed);
+	_shared->framesPresented.fetch_add(1, std::memory_order_relaxed);
 
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];

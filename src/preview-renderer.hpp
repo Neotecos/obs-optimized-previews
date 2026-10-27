@@ -71,8 +71,10 @@ public:
 #endif
 
 private:
-	/* Mostrada + la que WindowServer aún compone + pendiente de GPU + margen. */
-	static constexpr int kRingSize = 5;
+	/* Mostrada, publicada, las que WindowServer aún retiene (con la carga
+	 * real de OBS llegan a ser varias), pendientes de GPU y margen. Con 5,
+	 * en producción faltaba superficie libre en el 0,9 % de los fotogramas. */
+	static constexpr int kRingSize = 8;
 
 	struct Slot {
 		IOSurfaceRef surface = nullptr;

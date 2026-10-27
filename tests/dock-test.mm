@@ -166,6 +166,10 @@ int main(int argc, char **argv)
 			latencyCount ? double(coordinator.mainShared.latencySumNs.load()) / double(latencyCount) / 1e6 : 0;
 		const double latencyMaxMs = double(coordinator.mainShared.latencyMaxNs.load()) / 1e6;
 		printf("latencia hasta Core Animation: media %.1f ms, máxima %.1f ms\n", latencyMs, latencyMaxMs);
+		printf("entregados a Core Animation: %llu; sustituidos antes de mostrarse: %llu; huecos >1,5 fotogramas: %llu\n",
+		       (unsigned long long)coordinator.mainShared.framesPresented.load(),
+		       (unsigned long long)coordinator.mainShared.framesSuperseded.load(),
+		       (unsigned long long)coordinator.mainShared.presentGaps.load());
 		check(latencyMs > 0.0 && latencyMs < 25.0, "latencia media por debajo de 1,5 fotogramas (25 ms)");
 
 		check(dockedWidth > 0 && dockedHeight > 0, "el dock acoplado pide un tamaño en píxeles");

@@ -216,6 +216,11 @@ void logStatistics(const char *label, const nbp::PreviewShared &shared)
 		label, (unsigned long long)shared.framesPublished.load(),
 		(unsigned long long)shared.framesSkippedBusy.load(), averageMs,
 		double(shared.latencyMaxNs.load()) / 1e6);
+	obs_log(LOG_INFO,
+		"%s: %llu fotogramas entregados a Core Animation, %llu sustituidos antes de mostrarse, "
+		"%llu huecos de más de 1,5 fotogramas",
+		label, (unsigned long long)shared.framesPresented.load(),
+		(unsigned long long)shared.framesSuperseded.load(), (unsigned long long)shared.presentGaps.load());
 }
 
 /* Cierre en el hilo principal mientras Qt sigue vivo. */

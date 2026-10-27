@@ -63,6 +63,12 @@ struct PreviewShared {
 	std::atomic<uint64_t> latencySumNs{0};
 	std::atomic<uint64_t> latencyCount{0};
 	std::atomic<uint64_t> latencyMaxNs{0};
+	/* Cadencia vista por el hilo principal: fotogramas publicados que nunca
+	 * llegaron a la capa (los sustituyó otro más nuevo entre dos ticks del
+	 * display link) y huecos entre imágenes nuevas de más de 1,5 fotogramas. */
+	std::atomic<uint64_t> framesSuperseded{0};
+	std::atomic<uint64_t> presentGaps{0};
+	std::atomic<uint64_t> framesPresented{0};
 
 	void recordLatency(uint64_t ns)
 	{
