@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "preview-dock.hpp"
 
 #include <obs-module.h>
+#include <util/platform.h>
 
 #include <QActionGroup>
 #include <QContextMenuEvent>
@@ -259,10 +260,12 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 		return;
 
 	IOSurfaceRef next = nullptr;
+	uint64_t frameTime = 0;
 	os_unfair_lock_lock(&_shared->lock);
 	if (_shared->latestSerial != _seenSerial) {
 		_seenSerial = _shared->latestSerial;
 		next = _shared->latest;
+		frameTime = _shared->latestFrameTime;
 		if (next) {
 			CFRetain(next);
 			_shared->displayed = next;
@@ -272,6 +275,10 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 
 	if (!next)
 		return;
+
+	const uint64_t now = os_gettime_ns();
+	if (frameTime && now > frameTime)
+		_shared->recordLatency(now - frameTime);
 
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];

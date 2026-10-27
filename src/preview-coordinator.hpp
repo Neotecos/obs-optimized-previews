@@ -43,8 +43,13 @@ public:
 	PreviewCoordinator(const PreviewCoordinator &) = delete;
 	PreviewCoordinator &operator=(const PreviewCoordinator &) = delete;
 
-	/* Hilo gráfico, desde el callback de libobs. */
+	/* Hilo gráfico, desde obs_add_main_rendered_callback(). */
 	void onRendered();
+
+	/* Hilo gráfico, desde obs_add_main_render_callback(): al empezar cada
+	 * mezcla solo se sondean los fences, para publicar el fotograma
+	 * anterior sin esperar a que termine la composición del actual. */
+	void onBeforeRender();
 
 	/* Libera los recursos GL (dentro de obs_enter_graphics). */
 	void destroyGraphics();
@@ -82,6 +87,8 @@ private:
 	uint64_t verticalSeenAt_ = 0;
 	std::vector<gs_texture *> rejected_;
 	uint64_t rejectedSince_ = 0;
+	uint64_t searchingSince_ = 0;
+	bool warnedNotFound_ = false;
 	gs_texture *probeTarget_ = nullptr;
 };
 

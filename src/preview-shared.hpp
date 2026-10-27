@@ -49,6 +49,8 @@ struct PreviewShared {
 	IOSurfaceRef latest = nullptr;
 	/* Se incrementa cada vez que se publica una superficie. */
 	uint64_t latestSerial = 0;
+	/* Tiempo de vídeo (obs_get_video_frame_time) del fotograma publicado. */
+	uint64_t latestFrameTime = 0;
 	/* Superficie que el hilo principal ha puesto en su CALayer (solo como
 	 * identidad, sin retener): el hilo gráfico no la reutiliza. */
 	IOSurfaceRef displayed = nullptr;
@@ -56,6 +58,20 @@ struct PreviewShared {
 	/* Estadísticas (solo informativas). */
 	std::atomic<uint64_t> framesPublished{0};
 	std::atomic<uint64_t> framesSkippedBusy{0};
+	/* Desde el tiempo de vídeo del fotograma hasta que el hilo principal lo
+	 * entrega a Core Animation. */
+	std::atomic<uint64_t> latencySumNs{0};
+	std::atomic<uint64_t> latencyCount{0};
+	std::atomic<uint64_t> latencyMaxNs{0};
+
+	void recordLatency(uint64_t ns)
+	{
+		latencySumNs.fetch_add(ns, std::memory_order_relaxed);
+		latencyCount.fetch_add(1, std::memory_order_relaxed);
+		uint64_t max = latencyMaxNs.load(std::memory_order_relaxed);
+		while (ns > max && !latencyMaxNs.compare_exchange_weak(max, ns, std::memory_order_relaxed))
+			;
+	}
 
 	static constexpr uint64_t packSize(uint32_t width, uint32_t height)
 	{

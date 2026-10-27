@@ -38,6 +38,7 @@ namespace nbp {
 namespace {
 
 const char *const kProfileCallback = "nbp_rendered_callback";
+const char *const kProfilePoll = "nbp_poll";
 const char *const kProfileMain = "nbp_preview_main";
 const char *const kProfileVertical = "nbp_preview_vertical";
 const char *const kProfileVerify = "nbp_verify_vertical_texture";
@@ -51,6 +52,8 @@ constexpr uint64_t kVerticalLostNs = 2 * kSecond;
 /* Los candidatos descartados se vuelven a probar pasado este tiempo. */
 constexpr uint64_t kRejectedExpiryNs = 2 * kSecond;
 constexpr size_t kMaxRejected = 16;
+/* Aviso en el log si el canvas existe pero su textura no aparece. */
+constexpr uint64_t kNotFoundWarningNs = 10 * kSecond;
 
 GLuint textureName(gs_texture_t *texture)
 {
@@ -181,6 +184,17 @@ bool PreviewCoordinator::isVerticalTexture(gs_texture_t *candidate, obs_canvas_t
 	return false;
 }
 
+void PreviewCoordinator::onBeforeRender()
+{
+	if (!checkedRenderer.load(std::memory_order_relaxed) || unsupportedRenderer.load(std::memory_order_relaxed))
+		return;
+
+	profile_start(kProfilePoll);
+	mainRenderer_.poll();
+	verticalRenderer_.poll();
+	profile_end(kProfilePoll);
+}
+
 void PreviewCoordinator::onRendered()
 {
 	if (!checkedRenderer.load(std::memory_order_relaxed)) {
@@ -221,6 +235,20 @@ void PreviewCoordinator::onRendered()
 	if (canvas != trackedCanvas_) {
 		trackedCanvas_ = canvas;
 		forgetVerticalTexture();
+		searchingSince_ = 0;
+		warnedNotFound_ = false;
+	}
+
+	if (isMainMix && canvas && !verticalTexture_ &&
+	    verticalShared.requestedSize.load(std::memory_order_relaxed) != 0) {
+		if (!searchingSince_)
+			searchingSince_ = frameTime;
+		if (!warnedNotFound_ && frameTime - searchingSince_ >= kNotFoundWarningNs) {
+			warnedNotFound_ = true;
+			obs_log(LOG_WARNING, "no se identifica la textura del canvas vertical; ¿tiene vídeo activo?");
+		}
+	} else if (verticalTexture_) {
+		searchingSince_ = 0;
 	}
 
 	if (canvas && !isMainMix && target && !obs_canvas_removed(canvas) &&

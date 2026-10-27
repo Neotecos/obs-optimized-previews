@@ -93,6 +93,11 @@ void drawPattern(void *, uint32_t cx, uint32_t cy)
 	fill(solid, 0.0f, 0.0f, 1.0f, float(2 * band), cx, cy - 2 * band);
 }
 
+void beforeRender(void *, uint32_t, uint32_t)
+{
+	coordinator.onBeforeRender();
+}
+
 void rendered(void *)
 {
 	const uint64_t start = os_gettime_ns();
@@ -236,6 +241,7 @@ int main(int argc, char **argv)
 
 		callbackNs.reserve(8192);
 		obs_add_main_render_callback(drawPattern, nullptr);
+		obs_add_main_render_callback(beforeRender, nullptr);
 		obs_add_main_rendered_callback(rendered, nullptr);
 
 		/* 1. Horizontal: dock de 1280×720 px. */
@@ -350,6 +356,7 @@ int main(int argc, char **argv)
 		      "sin canvas vertical no se dibuja nada");
 
 		obs_remove_main_rendered_callback(rendered, nullptr);
+		obs_remove_main_render_callback(beforeRender, nullptr);
 		obs_remove_main_render_callback(drawPattern, nullptr);
 		obs_view_remove(decoyView);
 		obs_view_destroy(decoyView);

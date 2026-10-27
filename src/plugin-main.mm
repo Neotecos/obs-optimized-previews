@@ -78,6 +78,12 @@ void renderedCallback(void *)
 		plugin->coordinator.onRendered();
 }
 
+void renderCallback(void *, uint32_t, uint32_t)
+{
+	if (plugin)
+		plugin->coordinator.onBeforeRender();
+}
+
 /* ---------------------------------------------------------------------- */
 /* Hilo principal                                                         */
 
@@ -194,19 +200,22 @@ void removeRenderCallback()
 	if (plugin && plugin->callbackRegistered) {
 		/* Al volver, ningún callback nuestro está en ejecución: libobs los
 		 * llama con draw_callbacks_mutex tomado. */
+		obs_remove_main_render_callback(renderCallback, nullptr);
 		obs_remove_main_rendered_callback(renderedCallback, nullptr);
 		plugin->callbackRegistered = false;
 	}
 }
 
-void logStatistics()
+void logStatistics(const char *label, const nbp::PreviewShared &shared)
 {
-	obs_log(LOG_INFO, "horizontal: %llu fotogramas publicados, %llu sin superficie libre",
-		(unsigned long long)plugin->coordinator.mainShared.framesPublished.load(),
-		(unsigned long long)plugin->coordinator.mainShared.framesSkippedBusy.load());
-	obs_log(LOG_INFO, "vertical: %llu fotogramas publicados, %llu sin superficie libre",
-		(unsigned long long)plugin->coordinator.verticalShared.framesPublished.load(),
-		(unsigned long long)plugin->coordinator.verticalShared.framesSkippedBusy.load());
+	const uint64_t count = shared.latencyCount.load();
+	const double averageMs = count ? double(shared.latencySumNs.load()) / double(count) / 1e6 : 0.0;
+	obs_log(LOG_INFO,
+		"%s: %llu fotogramas publicados, %llu sin superficie libre, latencia hasta Core Animation "
+		"media %.1f ms, máxima %.1f ms",
+		label, (unsigned long long)shared.framesPublished.load(),
+		(unsigned long long)shared.framesSkippedBusy.load(), averageMs,
+		double(shared.latencyMaxNs.load()) / 1e6);
 }
 
 /* Cierre en el hilo principal mientras Qt sigue vivo. */
@@ -231,7 +240,8 @@ void shutdownFrontend()
 void frontendEvent(enum obs_frontend_event event, void *)
 {
 	if (event == OBS_FRONTEND_EVENT_EXIT && plugin) {
-		logStatistics();
+		logStatistics("horizontal", plugin->coordinator.mainShared);
+		logStatistics("vertical", plugin->coordinator.verticalShared);
 		shutdownFrontend();
 	}
 }
@@ -280,6 +290,7 @@ bool obs_module_load(void)
 	});
 	updateMessages();
 
+	obs_add_main_render_callback(renderCallback, nullptr);
 	obs_add_main_rendered_callback(renderedCallback, nullptr);
 	plugin->callbackRegistered = true;
 	obs_frontend_add_event_callback(frontendEvent, nullptr);

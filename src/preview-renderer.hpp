@@ -71,7 +71,8 @@ public:
 #endif
 
 private:
-	static constexpr int kRingSize = 4;
+	/* Mostrada + la que WindowServer aún compone + pendiente de GPU + margen. */
+	static constexpr int kRingSize = 5;
 
 	struct Slot {
 		IOSurfaceRef surface = nullptr;
@@ -81,6 +82,7 @@ private:
 		bool flushed = false;
 		bool ready = false;
 		uint64_t serial = 0;
+		uint64_t frameTime = 0;
 	};
 
 	bool ensureResources(uint32_t width, uint32_t height);

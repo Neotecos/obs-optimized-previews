@@ -106,6 +106,43 @@ if(NBP_BUILD_TESTS)
       BUILD_RPATH "${NBP_OBS_APP}/Contents/Frameworks"
   )
 
+  add_executable(
+    nbp-dock-test
+    tests/dock-test.mm
+    src/gl-scaler.mm
+    src/preview-coordinator.mm
+    src/preview-dock.hpp
+    src/preview-dock.mm
+    src/preview-renderer.mm
+  )
+  target_include_directories(nbp-dock-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(
+    nbp-dock-test
+    PRIVATE
+      OBS::libobs
+      plugin-support
+      Qt6::Core
+      Qt6::Widgets
+      "$<LINK_LIBRARY:FRAMEWORK,AppKit.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,CoreGraphics.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,CoreVideo.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,IOSurface.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,OpenGL.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,QuartzCore.framework>"
+  )
+  target_compile_options(nbp-dock-test PRIVATE -Wno-quoted-include-in-framework-header -Wno-comma)
+  target_compile_definitions(nbp-dock-test PRIVATE GL_SILENCE_DEPRECATION)
+  target_compile_features(nbp-dock-test PRIVATE cxx_std_20)
+  set_target_properties(
+    nbp-dock-test
+    PROPERTIES
+      AUTOMOC ON
+      XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+      XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
+      XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${NBP_OBS_APP}/Contents/Frameworks"
+      BUILD_RPATH "${NBP_OBS_APP}/Contents/Frameworks"
+  )
+
   add_executable(nbp-copy-probe tests/copy-probe.mm)
   target_link_libraries(
     nbp-copy-probe

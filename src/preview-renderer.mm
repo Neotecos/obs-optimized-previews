@@ -171,6 +171,7 @@ void PreviewRenderer::render(gs_texture_t *source, uint64_t frameTime)
 	slot->flushed = false;
 	slot->ready = false;
 	slot->serial = ++serial_;
+	slot->frameTime = frameTime;
 
 	profile_end(profileName_);
 }
@@ -216,6 +217,7 @@ void PreviewRenderer::poll()
 	IOSurfaceRef previous = shared_.latest;
 	shared_.latest = (IOSurfaceRef)CFRetain(newest->surface);
 	shared_.latestSerial++;
+	shared_.latestFrameTime = newest->frameTime;
 	os_unfair_lock_unlock(&shared_.lock);
 
 	if (previous)
