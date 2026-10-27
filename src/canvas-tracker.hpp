@@ -48,8 +48,8 @@ class CanvasTracker {
 public:
 	using StatusFn = std::function<void(bool found)>;
 
-	CanvasTracker(std::atomic<obs_canvas *> &published, std::atomic<bool> &relearn,
-		      std::atomic<uint64_t> &graphicsCallbacks);
+	CanvasTracker(std::atomic<obs_canvas *> &published, std::atomic<uint64_t> &publishedSize,
+		      std::atomic<bool> &relearn, std::atomic<uint64_t> &graphicsCallbacks);
 	~CanvasTracker();
 	CanvasTracker(const CanvasTracker &) = delete;
 	CanvasTracker &operator=(const CanvasTracker &) = delete;
@@ -71,12 +71,14 @@ private:
 	void retire();
 	void releaseRetired(bool force);
 	void notify(bool found);
+	void publishSize();
 
 	static void onGlobalCanvasSignal(void *param, calldata *data);
 	static void onCanvasRemove(void *param, calldata *data);
 	static void onCanvasVideoReset(void *param, calldata *data);
 
 	std::atomic<obs_canvas *> &published_;
+	std::atomic<uint64_t> &publishedSize_;
 	std::atomic<bool> &relearn_;
 	std::atomic<uint64_t> &graphicsCallbacks_;
 

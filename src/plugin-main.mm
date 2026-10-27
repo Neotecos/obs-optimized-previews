@@ -246,13 +246,14 @@ void frontendEvent(enum obs_frontend_event event, void *)
 	}
 }
 
-nbp::PreviewDock *addDock(const char *id, const char *titleKey, nbp::PreviewShared &shared, uint32_t &fpsSetting)
+nbp::PreviewDock *addDock(const char *id, const char *titleKey, nbp::PreviewShared &shared, bool vertical)
 {
 	auto *dock = new nbp::PreviewDock(shared);
-	QObject::connect(dock, &nbp::PreviewDock::fpsLimitSelected, dock, [&fpsSetting](unsigned int fps) {
-		fpsSetting = fps;
-		if (plugin)
-			saveSettings(plugin->settings);
+	QObject::connect(dock, &nbp::PreviewDock::fpsLimitSelected, dock, [vertical](unsigned int fps) {
+		if (!plugin)
+			return;
+		(vertical ? plugin->settings.verticalFps : plugin->settings.mainFps) = fps;
+		saveSettings(plugin->settings);
 	});
 
 	if (!obs_frontend_add_dock_by_id(id, obs_module_text(titleKey), dock)) {
@@ -273,14 +274,14 @@ bool obs_module_load(void)
 	coordinator.mainShared.fpsLimit.store(plugin->settings.mainFps);
 	coordinator.verticalShared.fpsLimit.store(plugin->settings.verticalFps);
 
-	plugin->mainDock = addDock(kDockMainId, "Dock.Main", coordinator.mainShared, plugin->settings.mainFps);
-	plugin->verticalDock =
-		addDock(kDockVerticalId, "Dock.Vertical", coordinator.verticalShared, plugin->settings.verticalFps);
+	plugin->mainDock = addDock(kDockMainId, "Dock.Main", coordinator.mainShared, false);
+	plugin->verticalDock = addDock(kDockVerticalId, "Dock.Vertical", coordinator.verticalShared, true);
 	if (plugin->verticalDock)
 		plugin->verticalDock->setMenuExtender(extendVerticalMenu);
 
-	plugin->tracker = std::make_unique<nbp::CanvasTracker>(coordinator.verticalCanvas, coordinator.relearnVertical,
-								 coordinator.graphicsCallbacks);
+	plugin->tracker = std::make_unique<nbp::CanvasTracker>(coordinator.verticalCanvas,
+								 coordinator.verticalCanvasSize,
+								 coordinator.relearnVertical, coordinator.graphicsCallbacks);
 	plugin->tracker->setTarget(plugin->settings.verticalName, plugin->settings.verticalUuid);
 	plugin->tracker->setStatusCallback([](bool found) {
 		if (!plugin)

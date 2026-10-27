@@ -277,6 +277,7 @@ int main(int argc, char **argv)
 		obs_canvas_t *vertical = obs_canvas_create("NBP Test Vertical", &verticalOvi, DEVICE);
 		check(vertical != nullptr, "canvas vertical creado");
 		coordinator.verticalShared.requestedSize.store(nbp::PreviewShared::packSize(540, 1200));
+		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1920));
 		coordinator.verticalCanvas.store(vertical);
 		coordinator.relearnVertical.store(true);
 		runFor(1.5);
@@ -313,6 +314,7 @@ int main(int argc, char **argv)
 		printf("--- video_reset ---\n");
 		struct obs_video_info squareOvi = videoInfo(1080, 1350, glModule);
 		check(obs_canvas_reset_video(vertical, &squareOvi), "canvas vertical a 1080x1350");
+		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1350));
 		coordinator.relearnVertical.store(true);
 		runFor(1.0);
 		printf("  superficie %ux%u\n", verticalConsumer.width(), verticalConsumer.height());
@@ -320,7 +322,9 @@ int main(int argc, char **argv)
 		      "tras video_reset se sigue la nueva textura (540x675)");
 
 		/* 5. video_reset sin aviso: la reidentificación periódica lo cubre. */
+		/* Sin aviso de reverificación (solo cambia el tamaño publicado). */
 		check(obs_canvas_reset_video(vertical, &verticalOvi), "canvas vertical a 1080x1920 sin aviso");
+		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1920));
 		runFor(6.0);
 		printf("  superficie %ux%u\n", verticalConsumer.width(), verticalConsumer.height());
 		check(verticalConsumer.width() == 540 && verticalConsumer.height() == 960,
@@ -347,6 +351,7 @@ int main(int argc, char **argv)
 		 *    referencia (lo que hace CanvasTracker). */
 		printf("--- retirada ---\n");
 		coordinator.verticalCanvas.store(nullptr);
+		coordinator.verticalCanvasSize.store(0);
 		waitCallbacks(2);
 		obs_canvas_remove(vertical);
 		obs_canvas_release(vertical);

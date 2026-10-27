@@ -35,9 +35,10 @@ constexpr int kReleaseIntervalMs = 50;
 
 } // namespace
 
-CanvasTracker::CanvasTracker(std::atomic<obs_canvas *> &published, std::atomic<bool> &relearn,
-			     std::atomic<uint64_t> &graphicsCallbacks)
+CanvasTracker::CanvasTracker(std::atomic<obs_canvas *> &published, std::atomic<uint64_t> &publishedSize,
+			     std::atomic<bool> &relearn, std::atomic<uint64_t> &graphicsCallbacks)
 	: published_(published),
+	  publishedSize_(publishedSize),
 	  relearn_(relearn),
 	  graphicsCallbacks_(graphicsCallbacks)
 {
@@ -133,6 +134,7 @@ void CanvasTracker::acquire(obs_canvas_t *canvas)
 	signal_handler_connect(handler, "remove", onCanvasRemove, this);
 	signal_handler_connect(handler, "video_reset", onCanvasVideoReset, this);
 
+	publishSize();
 	relearn_.store(true);
 	published_.store(canvas_);
 
@@ -145,6 +147,7 @@ void CanvasTracker::retire()
 		return;
 
 	published_.store(nullptr);
+	publishedSize_.store(0);
 
 	signal_handler_t *handler = obs_canvas_get_signal_handler(canvas_);
 	signal_handler_disconnect(handler, "remove", onCanvasRemove, this);
@@ -174,6 +177,17 @@ void CanvasTracker::releaseRetired(bool force)
 		releaseTimer_->stop();
 }
 
+/* Solo desde el hilo que modifica el canvas (el principal o el que emite
+ * video_reset, justo después del cambio). */
+void CanvasTracker::publishSize()
+{
+	struct obs_video_info ovi;
+	if (canvas_ && obs_canvas_get_video_info(canvas_, &ovi))
+		publishedSize_.store((uint64_t(ovi.base_width) << 32) | uint64_t(ovi.base_height));
+	else
+		publishedSize_.store(0);
+}
+
 void CanvasTracker::notify(bool found)
 {
 	if (lastStatus_ == int(found))
@@ -197,8 +211,11 @@ void CanvasTracker::onCanvasRemove(void *param, calldata *data)
 
 void CanvasTracker::onCanvasVideoReset(void *param, calldata *)
 {
-	/* La mezcla del canvas se ha recreado: su textura es otra. */
-	static_cast<CanvasTracker *>(param)->relearn_.store(true);
+	/* Se emite en el hilo que ha hecho obs_canvas_reset_video(), con la
+	 * mezcla nueva ya asignada. Su textura es otra: hay que verificarla. */
+	auto *self = static_cast<CanvasTracker *>(param);
+	self->publishSize();
+	self->relearn_.store(true);
 }
 
 } // namespace nbp

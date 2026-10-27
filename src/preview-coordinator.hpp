@@ -63,6 +63,12 @@ public:
 	/* Canvas vertical publicado por el hilo principal (CanvasTracker). La
 	 * referencia fuerte la conserva siempre el hilo principal. */
 	std::atomic<obs_canvas *> verticalCanvas{nullptr};
+	/* Tamaño base del canvas vertical, PreviewShared::packSize(); lo
+	 * publica el hilo principal al localizarlo y en cada video_reset, para
+	 * que el hilo gráfico no lea la mezcla del canvas en cada callback
+	 * (obs_canvas_reset_video() la libera antes de poner canvas->mix a NULL
+	 * fuera de mixes_mutex). */
+	std::atomic<uint64_t> verticalCanvasSize{0};
 	/* Pide volver a verificar la textura del canvas (video_reset). */
 	std::atomic<bool> relearnVertical{true};
 	/* Callbacks terminados; ver CanvasTracker. */

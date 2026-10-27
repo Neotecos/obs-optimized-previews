@@ -256,9 +256,10 @@ void PreviewCoordinator::onRendered()
 		if (relearnVertical.exchange(false))
 			forgetVerticalTexture();
 
-		struct obs_video_info ovi;
-		if (obs_canvas_get_video_info(canvas, &ovi) && gs_texture_get_width(target) == ovi.base_width &&
-		    gs_texture_get_height(target) == ovi.base_height && isVerticalTexture(target, canvas, frameTime) &&
+		const uint64_t canvasSize = verticalCanvasSize.load();
+		if (canvasSize && gs_texture_get_width(target) == PreviewShared::unpackWidth(canvasSize) &&
+		    gs_texture_get_height(target) == PreviewShared::unpackHeight(canvasSize) &&
+		    isVerticalTexture(target, canvas, frameTime) &&
 		    verticalRenderer_.lastRenderedFrame() != frameTime &&
 		    verticalRenderer_.wantsFrame(frameTime, frameInterval)) {
 			verticalRenderer_.render(target, frameTime);

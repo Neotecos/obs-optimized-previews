@@ -393,6 +393,10 @@ void PreviewDock::hideEvent(QHideEvent *event)
 
 void PreviewDock::contextMenuEvent(QContextMenuEvent *event)
 {
+	/* Tras el cierre el estado compartido puede haberse liberado. */
+	if (shutdown_)
+		return;
+
 	QMenu menu(this);
 	QMenu *fpsMenu = menu.addMenu(QString::fromUtf8(obs_module_text("Menu.FpsLimit")));
 	auto *group = new QActionGroup(fpsMenu);
