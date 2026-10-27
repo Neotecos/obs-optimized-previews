@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 struct gs_texture;
 typedef struct __GLsync *GLsync;
 
-namespace nbp {
+namespace op {
 
 class GlScaler;
 
@@ -62,7 +62,7 @@ public:
 
 	uint64_t lastRenderedFrame() const { return lastFrameTime_; }
 
-#ifdef NBP_RENDERER_TIMING
+#ifdef OP_RENDERER_TIMING
 	/* Solo para el banco de pruebas: duración de cada paso (ns). */
 	struct Timing {
 		uint64_t poll = 0, acquire = 0, draw = 0, fence = 0, recreate = 0;
@@ -104,4 +104,4 @@ private:
 	uint64_t lastFrameTime_ = 0;
 };
 
-} // namespace nbp
+} // namespace op

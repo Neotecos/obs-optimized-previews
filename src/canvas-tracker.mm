@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -25,7 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPointer>
 #include <QTimer>
 
-namespace nbp {
+namespace op {
 
 namespace {
 
@@ -218,4 +218,4 @@ void CanvasTracker::onCanvasVideoReset(void *param, calldata *)
 	self->relearn_.store(true);
 }
 
-} // namespace nbp
+} // namespace op

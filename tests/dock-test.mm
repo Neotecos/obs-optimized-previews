@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews — banco de pruebas del dock
+Optimized Previews — banco de pruebas del dock
 
 Abre durante unos segundos una ventana Qt con un QDockWidget que contiene el
 PreviewDock real, alimentado por libobs (OpenGL de OBS.app, sin interfaz de
@@ -10,7 +10,7 @@ OBS ni configuración del usuario) con un patrón animado. Comprueba que:
 - el anillo casi nunca se queda sin superficies libres;
 - todo sigue funcionando tras desacoplar el dock (Qt recrea el NSView).
 
-Uso: nbp-dock-test
+Uso: op-dock-test
 */
 
 #include "preview-coordinator.hpp"
@@ -40,7 +40,7 @@ extern "C" const char *obs_module_text(const char *lookup)
 
 namespace {
 
-nbp::PreviewCoordinator coordinator;
+op::PreviewCoordinator coordinator;
 int failures = 0;
 
 void check(bool condition, const char *what)
@@ -115,10 +115,10 @@ int main(int argc, char **argv)
 	obs_add_main_rendered_callback(rendered, nullptr);
 
 	QMainWindow window;
-	window.setWindowTitle("nbp-dock-test");
-	window.setCentralWidget(new QLabel("Non-Blocking Previews — prueba del dock"));
+	window.setWindowTitle("op-dock-test");
+	window.setCentralWidget(new QLabel("Optimized Previews — prueba del dock"));
 	auto *dockWidget = new QDockWidget("Previsualización (prueba)", &window);
-	auto *preview = new nbp::PreviewDock(coordinator.mainShared);
+	auto *preview = new op::PreviewDock(coordinator.mainShared);
 	dockWidget->setWidget(preview);
 	window.addDockWidget(Qt::LeftDockWidgetArea, dockWidget);
 	window.resize(1200, 700);
@@ -147,8 +147,8 @@ int main(int argc, char **argv)
 	uint32_t dockedWidth = 0, dockedHeight = 0;
 	QTimer::singleShot(4000, [&]() {
 		const uint64_t size = coordinator.mainShared.requestedSize.load();
-		dockedWidth = nbp::PreviewShared::unpackWidth(size);
-		dockedHeight = nbp::PreviewShared::unpackHeight(size);
+		dockedWidth = op::PreviewShared::unpackWidth(size);
+		dockedHeight = op::PreviewShared::unpackHeight(size);
 		publishedAtFloat = coordinator.mainShared.framesPublished.load();
 		dockWidget->setFloating(true);
 		dockWidget->resize(800, 500);
@@ -171,7 +171,7 @@ int main(int argc, char **argv)
 		const uint64_t size = coordinator.mainShared.requestedSize.load();
 
 		printf("tamaño pedido acoplado: %ux%u px; desacoplado: %ux%u px\n", dockedWidth, dockedHeight,
-		       nbp::PreviewShared::unpackWidth(size), nbp::PreviewShared::unpackHeight(size));
+		       op::PreviewShared::unpackWidth(size), op::PreviewShared::unpackHeight(size));
 		printf("publicados: %llu (tras desacoplar: %llu); sin superficie libre: %llu\n",
 		       (unsigned long long)published, (unsigned long long)(published - publishedAtFloat),
 		       (unsigned long long)busy);

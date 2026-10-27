@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -24,7 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <IOSurface/IOSurfaceRef.h>
 #include <os/lock.h>
 
-namespace nbp {
+namespace op {
 
 /* Estado que comparten el hilo gráfico de OBS (productor) y el hilo
  * principal (consumidor) para una previsualización.
@@ -87,4 +87,4 @@ struct PreviewShared {
 	static constexpr uint32_t unpackHeight(uint64_t packed) { return uint32_t(packed & 0xffffffffu); }
 };
 
-} // namespace nbp
+} // namespace op

@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews — banco de pruebas del hilo gráfico
+Optimized Previews — banco de pruebas del hilo gráfico
 
 Arranca libobs con el módulo OpenGL de OBS.app (sin interfaz, sin perfiles
 ni configuración del usuario), pinta patrones conocidos en el lienzo
@@ -8,7 +8,7 @@ PreviewCoordinator publica IOSurfaces correctas: orientación, color (sRGB),
 identificación del canvas vertical, redimensionado, video_reset, límite de
 FPS, retirada del canvas y coste por callback en el hilo gráfico.
 
-Uso: nbp-render-test [ruta/a/libobs-opengl.dylib]
+Uso: op-render-test [ruta/a/libobs-opengl.dylib]
 */
 
 #include "preview-coordinator.hpp"
@@ -32,7 +32,7 @@ namespace {
 constexpr uint32_t kCanvasWidth = 2560;
 constexpr uint32_t kCanvasHeight = 1440;
 
-nbp::PreviewCoordinator coordinator;
+op::PreviewCoordinator coordinator;
 
 /* Solo hilo gráfico mientras el callback está registrado. */
 bool collecting = false;
@@ -108,7 +108,7 @@ void rendered(void *)
 
 /* Hace lo mismo que el display link del dock: toma la última superficie. */
 struct Consumer {
-	nbp::PreviewShared &shared;
+	op::PreviewShared &shared;
 	IOSurfaceRef current = nullptr;
 	uint64_t seenSerial = 0;
 
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
 
 		/* 1. Horizontal: dock de 1280×720 px. */
 		printf("--- horizontal ---\n");
-		coordinator.mainShared.requestedSize.store(nbp::PreviewShared::packSize(1280, 720));
+		coordinator.mainShared.requestedSize.store(op::PreviewShared::packSize(1280, 720));
 		runFor(1.5);
 		check(mainConsumer.current != nullptr, "se publica al menos una superficie");
 		if (mainConsumer.current) {
@@ -274,10 +274,10 @@ int main(int argc, char **argv)
 		obs_view_t *decoyView = obs_view_create();
 		check(obs_view_add2(decoyView, &verticalOvi) != nullptr, "señuelo de 1080x1920 creado");
 		decoyActive = true;
-		obs_canvas_t *vertical = obs_canvas_create("NBP Test Vertical", &verticalOvi, DEVICE);
+		obs_canvas_t *vertical = obs_canvas_create("OP Test Vertical", &verticalOvi, DEVICE);
 		check(vertical != nullptr, "canvas vertical creado");
-		coordinator.verticalShared.requestedSize.store(nbp::PreviewShared::packSize(540, 1200));
-		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1920));
+		coordinator.verticalShared.requestedSize.store(op::PreviewShared::packSize(540, 1200));
+		coordinator.verticalCanvasSize.store(op::PreviewShared::packSize(1080, 1920));
 		coordinator.verticalCanvas.store(vertical);
 		coordinator.relearnVertical.store(true);
 		runFor(1.5);
@@ -314,7 +314,7 @@ int main(int argc, char **argv)
 		printf("--- video_reset ---\n");
 		struct obs_video_info squareOvi = videoInfo(1080, 1350, glModule);
 		check(obs_canvas_reset_video(vertical, &squareOvi), "canvas vertical a 1080x1350");
-		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1350));
+		coordinator.verticalCanvasSize.store(op::PreviewShared::packSize(1080, 1350));
 		coordinator.relearnVertical.store(true);
 		runFor(1.0);
 		printf("  superficie %ux%u\n", verticalConsumer.width(), verticalConsumer.height());
@@ -324,7 +324,7 @@ int main(int argc, char **argv)
 		/* 5. video_reset sin aviso: la reidentificación periódica lo cubre. */
 		/* Sin aviso de reverificación (solo cambia el tamaño publicado). */
 		check(obs_canvas_reset_video(vertical, &verticalOvi), "canvas vertical a 1080x1920 sin aviso");
-		coordinator.verticalCanvasSize.store(nbp::PreviewShared::packSize(1080, 1920));
+		coordinator.verticalCanvasSize.store(op::PreviewShared::packSize(1080, 1920));
 		runFor(6.0);
 		printf("  superficie %ux%u\n", verticalConsumer.width(), verticalConsumer.height());
 		check(verticalConsumer.width() == 540 && verticalConsumer.height() == 960,

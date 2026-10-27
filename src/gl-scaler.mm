@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -28,7 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define GL_DECODE_EXT 0x8A49
 #endif
 
-namespace nbp {
+namespace op {
 
 namespace {
 
@@ -250,4 +250,4 @@ void GlScaler::draw(unsigned int sourceTexture, uint32_t sourceWidth, uint32_t s
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
-} // namespace nbp
+} // namespace op

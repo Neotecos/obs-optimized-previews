@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -35,15 +35,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
  * imagen anterior. Evita recrear superficies en cada paso de un arrastre. */
 static const CFTimeInterval kResizeSettleSeconds = 0.15;
 
-@interface NBPPreviewView : NSView
-- (instancetype)initWithShared:(nbp::PreviewShared *)shared;
+@interface OPPreviewView : NSView
+- (instancetype)initWithShared:(op::PreviewShared *)shared;
 - (void)setQtVisible:(BOOL)visible;
 - (void)setMessage:(NSString *)message;
 - (void)shutdown;
 @end
 
-@implementation NBPPreviewView {
-	nbp::PreviewShared *_shared;
+@implementation OPPreviewView {
+	op::PreviewShared *_shared;
 	CADisplayLink *_displayLink;
 	CATextLayer *_messageLayer;
 	IOSurfaceRef _current;
@@ -56,7 +56,7 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 	BOOL _shutdown;
 }
 
-- (instancetype)initWithShared:(nbp::PreviewShared *)shared
+- (instancetype)initWithShared:(op::PreviewShared *)shared
 {
 	self = [super initWithFrame:NSMakeRect(0, 0, 1, 1)];
 	if (!self)
@@ -235,7 +235,7 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 	NSRect backing = [self convertRectToBacking:self.bounds];
 	uint32_t width = uint32_t(MAX(backing.size.width, 0));
 	uint32_t height = uint32_t(MAX(backing.size.height, 0));
-	uint64_t size = (width && height) ? nbp::PreviewShared::packSize(width, height) : 0;
+	uint64_t size = (width && height) ? op::PreviewShared::packSize(width, height) : 0;
 
 	if (size == _sentSize) {
 		_pendingSize = size;
@@ -309,7 +309,7 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 
 @end
 
-namespace nbp {
+namespace op {
 
 PreviewDock::PreviewDock(PreviewShared &shared, QWidget *parent) : QWidget(parent), shared_(shared)
 {
@@ -322,7 +322,7 @@ PreviewDock::PreviewDock(PreviewShared &shared, QWidget *parent) : QWidget(paren
 	setAttribute(Qt::WA_NativeWindow);
 	setMinimumSize(kMinimumSize);
 
-	NBPPreviewView *view = [[NBPPreviewView alloc] initWithShared:&shared_];
+	OPPreviewView *view = [[OPPreviewView alloc] initWithShared:&shared_];
 	view_ = (void *)CFBridgingRetain(view);
 }
 
@@ -330,7 +330,7 @@ PreviewDock::~PreviewDock()
 {
 	shutdown();
 	if (view_) {
-		NBPPreviewView *view = (NBPPreviewView *)CFBridgingRelease(view_);
+		OPPreviewView *view = (OPPreviewView *)CFBridgingRelease(view_);
 		[view removeFromSuperview];
 		view_ = nullptr;
 	}
@@ -340,7 +340,7 @@ void PreviewDock::setMessage(const QString &message)
 {
 	message_ = message;
 	if (view_)
-		[(__bridge NBPPreviewView *)view_ setMessage:message.toNSString()];
+		[(__bridge OPPreviewView *)view_ setMessage:message.toNSString()];
 }
 
 void PreviewDock::shutdown()
@@ -349,7 +349,7 @@ void PreviewDock::shutdown()
 		return;
 	shutdown_ = true;
 	if (view_)
-		[(__bridge NBPPreviewView *)view_ shutdown];
+		[(__bridge OPPreviewView *)view_ shutdown];
 }
 
 void PreviewDock::attachView()
@@ -358,7 +358,7 @@ void PreviewDock::attachView()
 		return;
 
 	NSView *host = (__bridge NSView *)reinterpret_cast<void *>(winId());
-	NBPPreviewView *view = (__bridge NBPPreviewView *)view_;
+	OPPreviewView *view = (__bridge OPPreviewView *)view_;
 	if (!host || view.superview == host)
 		return;
 
@@ -370,7 +370,7 @@ void PreviewDock::attachView()
 void PreviewDock::detachView()
 {
 	if (view_)
-		[(__bridge NBPPreviewView *)view_ removeFromSuperview];
+		[(__bridge OPPreviewView *)view_ removeFromSuperview];
 }
 
 bool PreviewDock::event(QEvent *event)
@@ -398,13 +398,13 @@ void PreviewDock::showEvent(QShowEvent *event)
 	QWidget::showEvent(event);
 	attachView();
 	if (view_)
-		[(__bridge NBPPreviewView *)view_ setQtVisible:YES];
+		[(__bridge OPPreviewView *)view_ setQtVisible:YES];
 }
 
 void PreviewDock::hideEvent(QHideEvent *event)
 {
 	if (view_)
-		[(__bridge NBPPreviewView *)view_ setQtVisible:NO];
+		[(__bridge OPPreviewView *)view_ setQtVisible:NO];
 	QWidget::hideEvent(event);
 }
 
@@ -447,4 +447,4 @@ void PreviewDock::contextMenuEvent(QContextMenuEvent *event)
 	menu.exec(event->globalPos());
 }
 
-} // namespace nbp
+} // namespace op

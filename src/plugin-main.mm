@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "native-integration.hpp"
 #include "preview-coordinator.hpp"
 #include "preview-dock.hpp"
+#include "settings-dialog.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -48,8 +49,8 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 namespace {
 
-const char *const kDockMainId = "nbp-preview-main";
-const char *const kDockVerticalId = "nbp-preview-vertical";
+const char *const kDockMainId = "optimized-preview-main";
+const char *const kDockVerticalId = "optimized-preview-aitum-vertical";
 
 const char *const kDefaultVerticalCanvas = "Aitum Vertical";
 
@@ -60,15 +61,16 @@ struct Settings {
 	std::string verticalUuid;
 	bool mainIntegrated = false;
 	bool verticalIntegrated = false;
+	op::AutoSwitchSettings autoSwitch;
 };
 
 struct Plugin {
-	nbp::PreviewCoordinator coordinator;
+	op::PreviewCoordinator coordinator;
 
 	/* Solo hilo principal. */
 	Settings settings;
-	QPointer<nbp::NativeIntegration> integration;
-	std::unique_ptr<nbp::CanvasTracker> tracker;
+	QPointer<op::NativeIntegration> integration;
+	std::unique_ptr<op::CanvasTracker> tracker;
 	QPointer<QTimer> rendererCheckTimer;
 	bool callbackRegistered = false;
 	bool verticalFound = false;
@@ -76,7 +78,7 @@ struct Plugin {
 
 Plugin *plugin = nullptr;
 
-nbp::PreviewDock *previewView(nbp::NativeIntegration::Target target)
+op::PreviewDock *previewView(op::NativeIntegration::Target target)
 {
 	return plugin && plugin->integration ? plugin->integration->view(target) : nullptr;
 }
@@ -118,6 +120,10 @@ void loadSettings(Settings &settings)
 	settings.verticalUuid = obs_data_get_string(data, "vertical_canvas_uuid");
 	settings.mainIntegrated = obs_data_get_bool(data, "main_integrated");
 	settings.verticalIntegrated = obs_data_get_bool(data, "vertical_integrated");
+	settings.autoSwitch.onStreamStart = obs_data_get_bool(data, "auto_on_stream_start");
+	settings.autoSwitch.onRecordStart = obs_data_get_bool(data, "auto_on_record_start");
+	settings.autoSwitch.onStreamStop = obs_data_get_bool(data, "auto_off_stream_stop");
+	settings.autoSwitch.onRecordStop = obs_data_get_bool(data, "auto_off_record_stop");
 	obs_data_release(data);
 }
 
@@ -136,6 +142,10 @@ void saveSettings(const Settings &settings)
 	obs_data_set_string(data, "vertical_canvas_uuid", settings.verticalUuid.c_str());
 	obs_data_set_bool(data, "main_integrated", settings.mainIntegrated);
 	obs_data_set_bool(data, "vertical_integrated", settings.verticalIntegrated);
+	obs_data_set_bool(data, "auto_on_stream_start", settings.autoSwitch.onStreamStart);
+	obs_data_set_bool(data, "auto_on_record_start", settings.autoSwitch.onRecordStart);
+	obs_data_set_bool(data, "auto_off_stream_stop", settings.autoSwitch.onStreamStop);
+	obs_data_set_bool(data, "auto_off_record_stop", settings.autoSwitch.onRecordStop);
 	if (!obs_data_save_json_safe(data, configPath().c_str(), "tmp", "bak"))
 		obs_log(LOG_WARNING, "no se pudo guardar la configuración");
 	obs_data_release(data);
@@ -152,10 +162,10 @@ void updateMessages()
 		return;
 
 	const bool unsupported = plugin->coordinator.unsupportedRenderer.load();
-	if (nbp::PreviewDock *main = previewView(nbp::NativeIntegration::Main))
+	if (op::PreviewDock *main = previewView(op::NativeIntegration::Main))
 		main->setMessage(unsupported ? text("Message.UnsupportedRenderer") : QString());
 
-	nbp::PreviewDock *vertical = previewView(nbp::NativeIntegration::Vertical);
+	op::PreviewDock *vertical = previewView(op::NativeIntegration::Vertical);
 	if (!vertical)
 		return;
 	if (unsupported)
@@ -170,14 +180,14 @@ void updateMessages()
 void extendMainMenu(QMenu *menu)
 {
 	if (plugin && plugin->integration)
-		plugin->integration->addMenuEntry(nbp::NativeIntegration::Main, menu);
+		plugin->integration->addMenuEntry(op::NativeIntegration::Main, menu);
 }
 
 /* Opción de integración y submenú del dock vertical para elegir el canvas. */
 void extendVerticalMenu(QMenu *menu)
 {
 	if (plugin && plugin->integration)
-		plugin->integration->addMenuEntry(nbp::NativeIntegration::Vertical, menu);
+		plugin->integration->addMenuEntry(op::NativeIntegration::Vertical, menu);
 
 	struct Entry {
 		std::string name;
@@ -229,7 +239,7 @@ void removeRenderCallback()
 	}
 }
 
-void logStatistics(const char *label, const nbp::PreviewShared &shared)
+void logStatistics(const char *label, const op::PreviewShared &shared)
 {
 	const uint64_t count = shared.latencyCount.load();
 	const double averageMs = count ? double(shared.latencySumNs.load()) / double(count) / 1e6 : 0.0;
@@ -246,11 +256,31 @@ void logStatistics(const char *label, const nbp::PreviewShared &shared)
 		(unsigned long long)shared.framesSuperseded.load(), (unsigned long long)shared.presentGaps.load());
 }
 
+/* Cambia las dos previsualizaciones a la optimizada o a la nativa. Si una
+ * no está disponible (modo estudio, Vertical Canvas no instalado), se omite. */
+void switchAll(bool optimized)
+{
+	if (!plugin || !plugin->integration)
+		return;
+	for (auto target : {op::NativeIntegration::Main, op::NativeIntegration::Vertical})
+		plugin->integration->setEnabled(target, optimized);
+}
+
+/* Solo se vuelve a la nativa si no queda nada en curso: hacerlo durante una
+ * grabación o una retransmisión volvería a provocar pérdidas de fotogramas. */
+void switchBackIfIdle()
+{
+	if (!obs_frontend_streaming_active() && !obs_frontend_recording_active())
+		switchAll(false);
+}
+
 /* Cierre en el hilo principal mientras Qt sigue vivo. */
 void shutdownFrontend()
 {
 	if (!plugin)
 		return;
+
+	op::closeSettingsDialog();
 
 	removeRenderCallback();
 	if (plugin->tracker) {
@@ -261,8 +291,8 @@ void shutdownFrontend()
 		delete plugin->rendererCheckTimer.data();
 	if (plugin->integration) {
 		plugin->integration->shutdown();
-		for (auto target : {nbp::NativeIntegration::Main, nbp::NativeIntegration::Vertical}) {
-			if (nbp::PreviewDock *view = plugin->integration->view(target))
+		for (auto target : {op::NativeIntegration::Main, op::NativeIntegration::Vertical}) {
+			if (op::PreviewDock *view = plugin->integration->view(target))
 				view->shutdown();
 		}
 		delete plugin->integration.data();
@@ -279,6 +309,29 @@ void frontendEvent(enum obs_frontend_event event, void *)
 							   plugin->settings.verticalIntegrated);
 		});
 	}
+	if (plugin) {
+		const op::AutoSwitchSettings &autoSwitch = plugin->settings.autoSwitch;
+		switch (event) {
+		case OBS_FRONTEND_EVENT_STREAMING_STARTED:
+			if (autoSwitch.onStreamStart)
+				switchAll(true);
+			break;
+		case OBS_FRONTEND_EVENT_RECORDING_STARTED:
+			if (autoSwitch.onRecordStart)
+				switchAll(true);
+			break;
+		case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
+			if (autoSwitch.onStreamStop)
+				switchBackIfIdle();
+			break;
+		case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
+			if (autoSwitch.onRecordStop)
+				switchBackIfIdle();
+			break;
+		default:
+			break;
+		}
+	}
 	if (event == OBS_FRONTEND_EVENT_EXIT && plugin) {
 		logStatistics("horizontal", plugin->coordinator.mainShared);
 		logStatistics("vertical", plugin->coordinator.verticalShared);
@@ -286,10 +339,10 @@ void frontendEvent(enum obs_frontend_event event, void *)
 	}
 }
 
-nbp::PreviewDock *createView(nbp::PreviewShared &shared, bool vertical)
+op::PreviewDock *createView(op::PreviewShared &shared, bool vertical)
 {
-	auto *view = new nbp::PreviewDock(shared);
-	QObject::connect(view, &nbp::PreviewDock::fpsLimitSelected, view, [vertical](unsigned int fps) {
+	auto *view = new op::PreviewDock(shared);
+	QObject::connect(view, &op::PreviewDock::fpsLimitSelected, view, [vertical](unsigned int fps) {
 		if (!plugin)
 			return;
 		(vertical ? plugin->settings.verticalFps : plugin->settings.mainFps) = fps;
@@ -303,15 +356,15 @@ nbp::PreviewDock *createView(nbp::PreviewShared &shared, bool vertical)
 
 /* El dock propio aloja la previsualización cuando no está integrada en la
  * nativa, y es la alternativa si la integración deja de encajar. */
-void addDock(const char *id, const char *titleKey, nbp::NativeIntegration::Target target,
-	     nbp::PreviewShared &shared)
+void addDock(const char *id, const char *titleKey, op::NativeIntegration::Target target,
+	     op::PreviewShared &shared)
 {
 	auto *home = new QWidget();
 	auto *layout = new QVBoxLayout(home);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
-	const bool vertical = target == nbp::NativeIntegration::Vertical;
+	const bool vertical = target == op::NativeIntegration::Vertical;
 	plugin->integration->setHome(target, home, [&shared, vertical]() { return createView(shared, vertical); });
 
 	if (!obs_frontend_add_dock_by_id(id, obs_module_text(titleKey), home))
@@ -324,23 +377,23 @@ bool obs_module_load(void)
 {
 	plugin = new Plugin();
 	loadSettings(plugin->settings);
-	nbp::PreviewCoordinator &coordinator = plugin->coordinator;
+	op::PreviewCoordinator &coordinator = plugin->coordinator;
 	coordinator.mainShared.fpsLimit.store(plugin->settings.mainFps);
 	coordinator.verticalShared.fpsLimit.store(plugin->settings.verticalFps);
 
-	plugin->integration = new nbp::NativeIntegration(
+	plugin->integration = new op::NativeIntegration(
 		static_cast<QMainWindow *>(obs_frontend_get_main_window()),
-		[](nbp::NativeIntegration::Target target, bool enabled) {
+		[](op::NativeIntegration::Target target, bool enabled) {
 			if (!plugin)
 				return;
-			(target == nbp::NativeIntegration::Main ? plugin->settings.mainIntegrated
+			(target == op::NativeIntegration::Main ? plugin->settings.mainIntegrated
 								 : plugin->settings.verticalIntegrated) = enabled;
 			saveSettings(plugin->settings);
 		});
-	addDock(kDockMainId, "Dock.Main", nbp::NativeIntegration::Main, coordinator.mainShared);
-	addDock(kDockVerticalId, "Dock.Vertical", nbp::NativeIntegration::Vertical, coordinator.verticalShared);
+	addDock(kDockMainId, "Dock.Main", op::NativeIntegration::Main, coordinator.mainShared);
+	addDock(kDockVerticalId, "Dock.Vertical", op::NativeIntegration::Vertical, coordinator.verticalShared);
 
-	plugin->tracker = std::make_unique<nbp::CanvasTracker>(coordinator.verticalCanvas,
+	plugin->tracker = std::make_unique<op::CanvasTracker>(coordinator.verticalCanvas,
 								 coordinator.verticalCanvasSize,
 								 coordinator.relearnVertical, coordinator.graphicsCallbacks);
 	plugin->tracker->setTarget(plugin->settings.verticalName, plugin->settings.verticalUuid);
@@ -348,6 +401,10 @@ bool obs_module_load(void)
 		if (!plugin)
 			return;
 		plugin->verticalFound = found;
+		/* Sin el canvas (p. ej., Vertical Canvas no instalado) no se buscan
+		 * sus widgets. */
+		if (plugin->integration)
+			plugin->integration->setSearchEnabled(op::NativeIntegration::Vertical, found);
 		updateMessages();
 	});
 	updateMessages();
@@ -356,6 +413,19 @@ bool obs_module_load(void)
 	obs_add_main_rendered_callback(renderedCallback, nullptr);
 	plugin->callbackRegistered = true;
 	obs_frontend_add_event_callback(frontendEvent, nullptr);
+
+	obs_frontend_add_tools_menu_item(
+		obs_module_text("Tools.Menu"),
+		[](void *) {
+			if (!plugin)
+				return;
+			op::showSettingsDialog(static_cast<QWidget *>(obs_frontend_get_main_window()),
+					       plugin->settings.autoSwitch, []() {
+						       if (plugin)
+							       saveSettings(plugin->settings);
+					       });
+		},
+		nullptr);
 
 	/* Vertical Canvas crea su canvas durante su propia carga; el
 	 * seguimiento empieza cuando el bucle de eventos ya está en marcha (y

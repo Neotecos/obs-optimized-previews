@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews — banco de pruebas de la integración nativa
+Optimized Previews — banco de pruebas de la integración nativa
 
 Reproduce la estructura de widgets de OBS 33 (OBSBasicPreview «preview» y el
 QFrame «previewDisabledWidget» en el widget central) y de Vertical Canvas
@@ -14,7 +14,7 @@ VerticalCanvasDock{Show,Hide}Preview registrados en libobs). Comprueba:
 La activación de la preview principal usa obs_frontend_set_preview_enabled(),
 que sin el frontend de OBS no hace nada; esa parte se prueba en OBS.
 
-Uso: nbp-integration-test
+Uso: op-integration-test
 */
 
 #include "native-integration.hpp"
@@ -140,8 +140,8 @@ void check(bool condition, const char *what)
 		failures++;
 }
 
-nbp::PreviewShared mainShared;
-nbp::PreviewShared verticalShared;
+op::PreviewShared mainShared;
+op::PreviewShared verticalShared;
 
 void processEvents(int ms)
 {
@@ -169,6 +169,57 @@ int main(int argc, char **argv)
 	/* El frontend de OBS activa este enrutado de atajos. */
 	obs_hotkey_enable_callback_rerouting(true);
 
+	/* 0. Sin Vertical Canvas instalado: no hay su dock ni sus atajos, aunque
+	 *    el estado guardado pida la vertical integrada. */
+	{
+		QMainWindow bare;
+		auto *bareCentral = new QWidget(&bare);
+		auto *bareLayout = new QVBoxLayout(bareCentral);
+		auto *barePreview = new OBSBasicPreview;
+		barePreview->setObjectName("preview");
+		auto *bareDisabled = new QFrame;
+		bareDisabled->setObjectName("previewDisabledWidget");
+		bareDisabled->hide();
+		bareLayout->addWidget(barePreview, 1);
+		bareLayout->addWidget(bareDisabled, 1);
+		bare.setCentralWidget(bareCentral);
+
+		auto *bareIntegration = new op::NativeIntegration(&bare, nullptr);
+		auto *bareMainHome = new QWidget;
+		(new QVBoxLayout(bareMainHome))->setContentsMargins(0, 0, 0, 0);
+		auto *bareVerticalHome = new QWidget;
+		(new QVBoxLayout(bareVerticalHome))->setContentsMargins(0, 0, 0, 0);
+		bareIntegration->setHome(op::NativeIntegration::Main, bareMainHome,
+					 []() { return new op::PreviewDock(mainShared); });
+		bareIntegration->setHome(op::NativeIntegration::Vertical, bareVerticalHome,
+					 []() { return new op::PreviewDock(verticalShared); });
+		bare.show();
+		bareIntegration->start(false, true);
+		bareIntegration->setSearchEnabled(op::NativeIntegration::Vertical, false);
+		processEvents(2500);
+
+		op::PreviewDock *bareView = bareIntegration->view(op::NativeIntegration::Vertical);
+		check(bareView && bareView->parentWidget() == bareVerticalHome,
+		      "sin Vertical Canvas la vertical se queda en su dock");
+		QMenu bareMenu;
+		bareIntegration->addMenuEntry(op::NativeIntegration::Vertical, &bareMenu);
+		check(!bareMenu.actions().isEmpty() && !bareMenu.actions().first()->isEnabled() &&
+			      !bareMenu.actions().first()->isChecked(),
+		      "sin Vertical Canvas la opción aparece desmarcada y deshabilitada");
+		bareIntegration->setEnabled(op::NativeIntegration::Vertical, true);
+		check(!bareIntegration->active(op::NativeIntegration::Vertical),
+		      "sin Vertical Canvas no se integra");
+
+		bareIntegration->shutdown();
+		for (auto target : {op::NativeIntegration::Main, op::NativeIntegration::Vertical}) {
+			if (op::PreviewDock *v = bareIntegration->view(target))
+				v->shutdown();
+		}
+		delete bareIntegration;
+		delete bareMainHome;
+		delete bareVerticalHome;
+	}
+
 	QMainWindow window;
 	auto *central = new QWidget(&window);
 	auto *centralLayout = new QVBoxLayout(central);
@@ -193,8 +244,8 @@ int main(int argc, char **argv)
 	QPointer<QDockWidget> verticalDockWidget = makeCanvasDock();
 
 	bool savedVertical = false;
-	auto *integration = new nbp::NativeIntegration(&window, [&](nbp::NativeIntegration::Target target, bool on) {
-		if (target == nbp::NativeIntegration::Vertical)
+	auto *integration = new op::NativeIntegration(&window, [&](op::NativeIntegration::Target target, bool on) {
+		if (target == op::NativeIntegration::Vertical)
 			savedVertical = on;
 	});
 
@@ -205,9 +256,9 @@ int main(int argc, char **argv)
 	auto *ownDock = new QDockWidget("Nuestra vertical", &window);
 	ownDock->setWidget(verticalHome);
 	window.addDockWidget(Qt::LeftDockWidgetArea, ownDock);
-	integration->setHome(nbp::NativeIntegration::Main, mainHome, []() { return new nbp::PreviewDock(mainShared); });
-	integration->setHome(nbp::NativeIntegration::Vertical, verticalHome,
-			     []() { return new nbp::PreviewDock(verticalShared); });
+	integration->setHome(op::NativeIntegration::Main, mainHome, []() { return new op::PreviewDock(mainShared); });
+	integration->setHome(op::NativeIntegration::Vertical, verticalHome,
+			     []() { return new op::PreviewDock(verticalShared); });
 
 	window.resize(1200, 800);
 	window.show();
@@ -217,7 +268,7 @@ int main(int argc, char **argv)
 	integration->start(false, true);
 	processEvents(200);
 	auto *canvasDock = static_cast<CanvasDock *>(verticalDockWidget->widget());
-	nbp::PreviewDock *view = integration->view(nbp::NativeIntegration::Vertical);
+	op::PreviewDock *view = integration->view(op::NativeIntegration::Vertical);
 	check(view != nullptr, "previsualización vertical creada");
 	check(!canvasDock->preview->isVisibleTo(canvasDock), "el atajo desactiva la preview nativa de Vertical Canvas");
 	check(view && view->parentWidget() == canvasDock->disabled, "la del plugin ocupa su hueco");
@@ -233,7 +284,7 @@ int main(int argc, char **argv)
 	check(view && view->geometry() == canvasDock->disabled->rect(), "sigue el tamaño del hueco al redimensionar");
 
 	/* 3. Desactivar: vuelve a su dock y se reactiva la nativa. */
-	integration->setEnabled(nbp::NativeIntegration::Vertical, false);
+	integration->setEnabled(op::NativeIntegration::Vertical, false);
 	processEvents(200);
 	check(canvasDock->preview->isVisibleTo(canvasDock), "se reactiva la preview nativa");
 	check(view && view->parentWidget() == verticalHome, "la del plugin vuelve a su dock");
@@ -273,23 +324,23 @@ int main(int argc, char **argv)
 
 	/* 6. Vertical Canvas recrea su dock: la previsualización se recrea y se
 	 *    vuelve a integrar en el nuevo. */
-	integration->setEnabled(nbp::NativeIntegration::Vertical, true);
+	integration->setEnabled(op::NativeIntegration::Vertical, true);
 	processEvents(200);
 	check(savedVertical, "se guarda el estado activado");
 	delete verticalDockWidget.data();
 	processEvents(200);
-	nbp::PreviewDock *recreated = integration->view(nbp::NativeIntegration::Vertical);
+	op::PreviewDock *recreated = integration->view(op::NativeIntegration::Vertical);
 	check(recreated && recreated->parentWidget() == verticalHome, "si el dock nativo desaparece, vuelve a su dock");
 	verticalDockWidget = makeCanvasDock();
 	processEvents(2600);
 	auto *newCanvasDock = static_cast<CanvasDock *>(verticalDockWidget->widget());
-	recreated = integration->view(nbp::NativeIntegration::Vertical);
+	recreated = integration->view(op::NativeIntegration::Vertical);
 	check(recreated && recreated->parentWidget() == newCanvasDock->disabled,
 	      "se vuelve a integrar cuando Vertical Canvas recrea su dock");
 
 	integration->shutdown();
-	for (auto target : {nbp::NativeIntegration::Main, nbp::NativeIntegration::Vertical}) {
-		if (nbp::PreviewDock *v = integration->view(target))
+	for (auto target : {op::NativeIntegration::Main, op::NativeIntegration::Vertical}) {
+		if (op::PreviewDock *v = integration->view(target))
 			v->shutdown();
 	}
 	delete integration;

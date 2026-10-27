@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews — sonda de coste de copia en el hilo gráfico
+Optimized Previews — sonda de coste de copia en el hilo gráfico
 
 Mide, en un contexto OpenGL real de OBS (libobs-opengl de OBS.app), el coste
 de CPU en el hilo gráfico de varias formas de llevar una textura de libobs a
@@ -10,7 +10,7 @@ otra textura:
   D) glCopyTexSubImage2D a una IOSurface
   E) dibujo con libobs a una textura intermedia (referencia)
 
-Uso: nbp-copy-probe [ancho alto]
+Uso: op-copy-probe [ancho alto]
 */
 
 #include <obs.h>

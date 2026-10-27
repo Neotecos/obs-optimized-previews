@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 class QMenu;
 
-namespace nbp {
+namespace op {
 
 /* Contenido de un dock: un QWidget nativo que aloja un NSView con una capa
  * de Core Animation cuyo `contents` es la última IOSurface publicada por el
@@ -67,10 +67,10 @@ private:
 	void detachView();
 
 	PreviewShared &shared_;
-	void *view_ = nullptr; /* NBPPreviewView *, retenido (CFBridgingRetain) */
+	void *view_ = nullptr; /* OPPreviewView *, retenido (CFBridgingRetain) */
 	QString message_;
 	std::function<void(QMenu *)> menuExtender_;
 	bool shutdown_ = false;
 };
 
-} // namespace nbp
+} // namespace op

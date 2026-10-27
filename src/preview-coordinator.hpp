@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 struct gs_texture;
 struct obs_canvas;
 
-namespace nbp {
+namespace op {
 
 /* Trabajo del hilo gráfico para las dos previsualizaciones. onRendered()
  * se registra con obs_add_main_rendered_callback(): libobs lo llama al
@@ -98,4 +98,4 @@ private:
 	gs_texture *probeTarget_ = nullptr;
 };
 
-} // namespace nbp
+} // namespace op

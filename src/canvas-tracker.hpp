@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -29,7 +29,7 @@ struct obs_canvas;
 class QObject;
 class QTimer;
 
-namespace nbp {
+namespace op {
 
 /* Localiza un canvas por UUID o por nombre y lo pone a disposición del hilo
  * gráfico. Vive en el hilo principal.
@@ -100,4 +100,4 @@ private:
 	bool started_ = false;
 };
 
-} // namespace nbp
+} // namespace op

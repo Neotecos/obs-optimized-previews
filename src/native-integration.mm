@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -41,7 +41,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <cstring>
 
-namespace nbp {
+namespace op {
 
 namespace {
 
@@ -131,6 +131,8 @@ NativeIntegration::NativeIntegration(QMainWindow *mainWindow, StateFn onStateCha
 			Slot &slot = slots_[t];
 			if (!slot.disabledWidget)
 				slot.embedded = false;
+			if (!slot.search)
+				continue;
 			if (slot.enabled && !slot.embedded && locate(Target(t)))
 				apply(Target(t));
 			else if (!slot.nativePreview)
@@ -422,8 +424,11 @@ void NativeIntegration::addMenuEntry(Target target, QMenu *menu)
 
 	auto *action = new QAction(text("Menu.UseOptimized"), menu);
 	action->setCheckable(true);
-	action->setChecked(slot.enabled);
-	action->setEnabled(slot.enabled || available(target));
+	/* Marcada solo si está integrada de verdad: con la preferencia guardada
+	 * pero sin poder aplicarla (Vertical Canvas no instalado, modo estudio),
+	 * aparece desmarcada y deshabilitada. */
+	action->setChecked(slot.embedded);
+	action->setEnabled(slot.embedded || available(target));
 	connect(action, &QAction::triggered, this, [this, target](bool checked) {
 		/* Después de cerrar el menú, que es de OBS o de Vertical Canvas. */
 		QTimer::singleShot(0, this, [this, target, checked]() { setEnabled(target, checked); });
@@ -503,4 +508,4 @@ bool NativeIntegration::eventFilter(QObject *watched, QEvent *event)
 	return false;
 }
 
-} // namespace nbp
+} // namespace op

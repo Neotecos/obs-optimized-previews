@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -33,15 +33,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define GL_DECODE_EXT 0x8A49
 #endif
 
-namespace nbp {
+namespace op {
 
 namespace {
 
-const char *const kProfileCallback = "nbp_rendered_callback";
-const char *const kProfilePoll = "nbp_poll";
-const char *const kProfileMain = "nbp_preview_main";
-const char *const kProfileVertical = "nbp_preview_vertical";
-const char *const kProfileVerify = "nbp_verify_vertical_texture";
+const char *const kProfileCallback = "op_rendered_callback";
+const char *const kProfilePoll = "op_poll";
+const char *const kProfileMain = "op_preview_main";
+const char *const kProfileVertical = "op_preview_vertical";
+const char *const kProfileVerify = "op_verify_vertical_texture";
 
 constexpr uint64_t kSecond = 1000000000ULL;
 /* Se vuelve a verificar la textura del canvas vertical con esta cadencia,
@@ -298,4 +298,4 @@ void PreviewCoordinator::releasePublished()
 	}
 }
 
-} // namespace nbp
+} // namespace op

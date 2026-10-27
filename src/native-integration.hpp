@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -28,7 +28,7 @@ class QMenu;
 class QTimer;
 class QWidget;
 
-namespace nbp {
+namespace op {
 
 class PreviewDock;
 
@@ -64,7 +64,14 @@ public:
 	 * quedan como están para que su estado se guarde. */
 	void shutdown();
 
+	/* Preferencia guardada (puede estar pendiente de aplicar). */
 	bool enabled(Target target) const { return slots_[target].enabled; }
+	/* Si la previsualización está ahora mismo en el hueco nativo. */
+	bool active(Target target) const { return slots_[target].embedded; }
+
+	/* Si es false, no se buscan periódicamente los widgets nativos de ese
+	 * destino (p. ej., la vertical cuando Vertical Canvas no está instalado). */
+	void setSearchEnabled(Target target, bool search) { slots_[target].search = search; }
 	void setEnabled(Target target, bool enable);
 
 	/* Añade la opción al principio de un menú (el nativo o el del dock). */
@@ -84,6 +91,7 @@ private:
 		QPointer<QWidget> menuParent;
 		bool enabled = false;
 		bool embedded = false;
+		bool search = true;
 	};
 
 	bool locate(Target target);
@@ -108,4 +116,4 @@ private:
 	bool stopped_ = false;
 };
 
-} // namespace nbp
+} // namespace op

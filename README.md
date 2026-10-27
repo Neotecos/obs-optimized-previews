@@ -1,15 +1,19 @@
-# Non-Blocking Previews para OBS Studio (macOS)
+# Optimized previews para OBS Studio (macOS)
 
 Plugin de OBS Studio para macOS que sustituye las previsualizaciones de OBS y
-de Vertical Canvas por dos docks propios, **sin que el hilo gráfico de OBS
-espere nunca al compositor de macOS**. Con ellos ya no se pierden fotogramas
-de render por culpa de las previsualizaciones.
+de Vertical Canvas (Aitum) por previsualizaciones de solo lectura presentadas
+por Core Animation, **sin que el hilo gráfico de OBS espere nunca al
+compositor de macOS**. Así las previsualizaciones dejan de provocar pérdidas
+de fotogramas de render.
 
-- **Previsualización (sin bloqueo):** el lienzo principal (horizontal).
-- **Previsualización vertical (sin bloqueo):** el canvas «Aitum Vertical» de
+- **Optimized Preview:** el lienzo principal (horizontal).
+- **Optimized Aitum Vertical Preview:** el canvas «Aitum Vertical» de
   Vertical Canvas, o cualquier otro canvas que elijas.
 
-Son solo para visualizar: no permiten seleccionar ni mover fuentes.
+Pueden ocupar el mismo hueco que la previsualización nativa o ir en docks
+propios. Son solo para visualizar: no permiten seleccionar ni mover fuentes.
+Vertical Canvas es opcional: sin él, la previsualización horizontal funciona
+igual.
 
 ## Por qué
 
@@ -17,20 +21,23 @@ En macOS con el renderizador OpenGL, OBS presenta cada previsualización
 dentro de su hilo gráfico (`render_displays()` → `device_present()`:
 `glFlush`, cambio de contexto, `glBlitFramebuffer` y
 `[NSOpenGLContext flushBuffer]`). Ese hilo tiene que entregar un fotograma
-cada 16,67 ms. Cuando la presentación espera al compositor, OBS pierde
-fotogramas.
+cada 16,67 ms (a 60 FPS). Cuando la presentación espera al compositor, el
+fotograma llega tarde y OBS lo pierde. Con una carga de producción exigente
+(emisión multipista, grabación, varias salidas), las previsualizaciones
+nativas pueden causar varios puntos porcentuales de fotogramas perdidos; sin
+ellas, ninguno.
 
 ## Cómo funciona
 
 ```
 Hilo gráfico de OBS (nunca espera)            Hilo principal (Qt/AppKit)
 ──────────────────────────────────            ──────────────────────────
-render_main_texture() de cada mezcla          CADisplayLink del dock
+render_main_texture() de cada mezcla          CADisplayLink de la preview
  └ callback «rendered» del plugin              ├ lee la última IOSurface lista
     ├ ¿la mezcla es el lienzo principal         │  (cerrojo de unas instrucciones;
     │  o el canvas vertical?                   │   el hilo gráfico solo usa trylock)
     ├ shader propio: textura del lienzo ──►    └ CALayer.contents = IOSurface
-    │  IOSurface libre de un anillo de 5           (Core Animation la compone
+    │  IOSurface libre de un anillo de 8           (Core Animation la compone
     ├ glFenceSync                                    fuera de OBS)
     └ fences anteriores con timeout 0:
        la más reciente terminada se publica
@@ -60,13 +67,16 @@ render_main_texture() de cada mezcla          CADisplayLink del dock
 - La referencia fuerte al canvas vertical la tiene siempre el hilo principal.
   Liberarla en el hilo gráfico, dentro del callback de render, interbloquearía
   `mixes_mutex`.
-- Solo se usa API pública de OBS 33. No se modifica OBS ni otros plugins.
+- No modifica OBS ni otros plugins. El renderizado usa solo API pública de
+  OBS 33; la integración en el hueco de las previews nativas se apoya además
+  en detalles de Qt (ver [Limitaciones](#limitaciones)).
 
 ## Requisitos
 
 - macOS 14 o posterior, Apple Silicon.
 - OBS Studio 33.0.0 o posterior, con el renderizador **OpenGL**. Con Metal,
-  los docks muestran un aviso y no dibujan nada.
+  las previsualizaciones muestran un aviso y no dibujan nada.
+- Opcional: Vertical Canvas (Aitum) 1.6.x para la previsualización vertical.
 - Para compilar: Xcode 16 o posterior y CMake 3.28 o posterior.
 
 ## Compilar
@@ -80,21 +90,22 @@ La primera configuración descarga en `.deps/` las fuentes de OBS 33.0.0 y las
 dependencias precompiladas de OBS (obs-deps y Qt 6 del 23/10/2026, las mismas
 que usa OBS 33.0.0), y compila libobs y obs-frontend-api. Tarda unos minutos.
 
-Resultado: `build_macos/RelWithDebInfo/obs-nonblocking-previews.plugin`
+Resultado: `build_macos/RelWithDebInfo/obs-optimized-previews.plugin`
 (arm64, firma ad hoc).
 
 ### Bancos de pruebas
 
 Se compilan junto al plugin y usan las bibliotecas de `/Applications/OBS.app`
-(libobs y OpenGL). Arrancan libobs sin interfaz y sin leer tu configuración
-ni tus perfiles. **No los ejecutes con OBS emitiendo**: añaden carga a la GPU.
+(libobs y OpenGL). Arrancan libobs sin interfaz y sin leer la configuración
+ni los perfiles de OBS. **No los ejecutes con OBS emitiendo**: los tres
+primeros añaden carga a la GPU.
 
 | Ejecutable | Qué comprueba |
 |---|---|
-| `build_macos/RelWithDebInfo/nbp-render-test` | Orientación, color sRGB, tamaño, canvas vertical frente a un señuelo del mismo tamaño, `video_reset`, límite de FPS, retirada del canvas y coste por callback. |
-| `build_macos/RelWithDebInfo/nbp-dock-test` | El dock real en una ventana Qt durante 8 s: display link, `IOSurfaceIsInUse`, desacople del dock y latencia. |
-| `build_macos/RelWithDebInfo/nbp-integration-test` | Integración en el hueco de la preview nativa con una réplica de los widgets de OBS y Vertical Canvas: atajos de Vertical Canvas, opción en los menús nativos, tamaño y recreación del dock. No usa la GPU. |
-| `build_macos/RelWithDebInfo/nbp-copy-probe` | Coste en el hilo gráfico de varias formas de copiar una textura. |
+| `build_macos/RelWithDebInfo/op-render-test` | Orientación, color sRGB, tamaño, canvas vertical frente a un señuelo del mismo tamaño, `video_reset`, límite de FPS, retirada del canvas y coste por callback. |
+| `build_macos/RelWithDebInfo/op-dock-test` | La previsualización real en una ventana Qt durante 8 s: display link, `IOSurfaceIsInUse`, desacople del dock, latencia y cadencia. |
+| `build_macos/RelWithDebInfo/op-copy-probe` | Coste en el hilo gráfico de varias formas de copiar una textura. |
+| `build_macos/RelWithDebInfo/op-integration-test` | Integración en el hueco de la preview nativa con una réplica de los widgets de OBS y Vertical Canvas, y sin Vertical Canvas instalado. No usa la GPU. |
 
 ## Instalar
 
@@ -102,7 +113,7 @@ Con OBS cerrado:
 
 ```sh
 mkdir -p ~/Library/Application\ Support/obs-studio/plugins
-ditto build_macos/RelWithDebInfo/obs-nonblocking-previews.plugin ~/Library/Application\ Support/obs-studio/plugins/obs-nonblocking-previews.plugin
+ditto build_macos/RelWithDebInfo/obs-optimized-previews.plugin ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
 ```
 
 ## Desinstalar
@@ -110,13 +121,13 @@ ditto build_macos/RelWithDebInfo/obs-nonblocking-previews.plugin ~/Library/Appli
 Con OBS cerrado:
 
 ```sh
-rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-nonblocking-previews.plugin
+rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
 ```
 
 Para borrar también sus opciones guardadas:
 
 ```sh
-rm -rf ~/Library/Application\ Support/obs-studio/plugin_config/obs-nonblocking-previews
+rm -rf ~/Library/Application\ Support/obs-studio/plugin_config/obs-optimized-previews
 ```
 
 ## Configurar
@@ -124,8 +135,8 @@ rm -rf ~/Library/Application\ Support/obs-studio/plugin_config/obs-nonblocking-p
 ### En el lugar de la previsualización nativa (recomendado)
 
 Clic derecho sobre la previsualización de OBS o sobre la de Vertical Canvas
-→ **Usar previsualización optimizada (sin bloqueo)**. El plugin desactiva esa
-preview nativa y pone la suya en el mismo hueco. Para volver a la nativa,
+→ **Usar previsualización optimizada (solo lectura)**. El plugin desactiva
+esa preview nativa y pone la suya en el mismo hueco. Para volver a la nativa,
 clic derecho sobre la del plugin y desmarca la misma opción.
 
 - La de OBS se desactiva con `obs_frontend_set_preview_enabled()`, y la de
@@ -136,46 +147,58 @@ clic derecho sobre la del plugin y desmarca la misma opción.
   desactivar su previsualización en ese modo. Si estaba activa, la nativa
   reaparece mientras dure el modo estudio.
 - Si reactivas la nativa por otra vía (un atajo, por ejemplo), la del plugin
-  deja de verse y de dibujar, pero la opción sigue marcada y se reaplica la
+  deja de verse y de dibujar, pero la preferencia se conserva y se reaplica la
   próxima vez que abras OBS.
+
+### Cambio automático (Herramientas → Previsualizaciones optimizadas…)
+
+Cuatro casillas, todas desactivadas por defecto:
+
+- Cambiar a la previsualización optimizada al iniciar la retransmisión.
+- Cambiar a la previsualización optimizada al iniciar la grabación.
+- Volver a la previsualización nativa al terminar la retransmisión.
+- Volver a la previsualización nativa al terminar la grabación.
+
+Se aplican a las dos previsualizaciones. Solo se vuelve a la nativa cuando no
+queda ninguna retransmisión ni grabación de OBS en curso, para no reintroducir
+pérdidas de fotogramas en la que siga activa. Las salidas propias de Vertical
+Canvas (su retransmisión y grabación) no activan estos cambios.
 
 ### En docks propios
 
-**Docks → Previsualización (sin bloqueo)** y **Docks → Previsualización
-vertical (sin bloqueo)**. Úsalos si prefieres otra disposición o si la
-integración deja de funcionar con una versión futura de OBS o de Vertical
-Canvas. En ese caso, desactiva a mano la preview de OBS (clic derecho →
-desmarca **Habilitar previsualización**) y la de Vertical Canvas. Mientras
-una previsualización está integrada, su dock muestra un aviso.
+**Docks → Optimized Preview** y **Docks → Optimized Aitum Vertical Preview**
+(en español, «Previsualización optimizada» y «Previsualización vertical de
+Aitum optimizada»). Úsalos si prefieres otra disposición o si la integración
+deja de funcionar con una versión futura de OBS o de Vertical Canvas. En ese
+caso, desactiva a mano la preview de OBS (clic derecho → desmarca
+**Habilitar previsualización**) y la de Vertical Canvas. Mientras una
+previsualización está integrada, su dock muestra un aviso.
 
-### Opciones
+### Opciones de cada previsualización
 
-Clic derecho sobre cada previsualización del plugin:
+Clic derecho sobre una previsualización del plugin:
 
-- **Usar previsualización optimizada (sin bloqueo):** ver arriba.
-- **Límite de fotogramas:** igual que OBS, 60, 30 o 20 FPS por preview.
+- **Usar previsualización optimizada (solo lectura):** ver arriba.
+- **Límite de fotogramas:** igual que OBS, 60, 30 o 20 FPS.
 - **Canvas** (solo en la vertical): elige el canvas que se muestra.
 
-Las opciones se guardan en
-`~/Library/Application Support/obs-studio/plugin_config/obs-nonblocking-previews/settings.json`
-(`main_fps`, `vertical_fps`, `vertical_canvas_name`, `main_integrated`,
-`vertical_integrated` y, opcionalmente, `vertical_canvas_uuid`; si hay UUID
-tiene prioridad sobre el nombre).
+Todas las opciones se guardan en
+`~/Library/Application Support/obs-studio/plugin_config/obs-optimized-previews/settings.json`.
 
-Un dock oculto (cerrado o en una pestaña no visible) no dibuja nada. Pasados
-10 s, libera sus superficies.
+Una previsualización oculta (dock cerrado o en una pestaña no visible) no
+dibuja nada; pasados 10 s, libera sus superficies.
 
 ## Medir
 
 En el log de OBS:
 
-- En el perfil al cerrar OBS: `nbp_rendered_callback` (todo el trabajo del
-  plugin al terminar cada mezcla), `nbp_poll` (comprobación de fences al
-  empezar cada mezcla), y dentro de ellas `nbp_preview_main`,
-  `nbp_preview_vertical`, `nbp_verify_vertical_texture` y
-  `nbp_recreate_surfaces`. Con las previews de OBS apagadas,
+- En el perfil al cerrar OBS: `op_rendered_callback` (todo el trabajo del
+  plugin al terminar cada mezcla), `op_poll` (comprobación de fences al
+  empezar cada mezcla), y dentro de ellas `op_preview_main`,
+  `op_preview_vertical`, `op_verify_vertical_texture` y
+  `op_recreate_surfaces`. Con las previews nativas apagadas,
   `render_displays` debería quedar prácticamente a cero.
-- Al cerrar OBS, dos líneas por preview:
+- Al cerrar OBS, dos líneas por previsualización:
   - fotogramas publicados, fotogramas sin superficie libre y latencia media y
     máxima desde la composición hasta Core Animation;
   - fotogramas entregados a Core Animation, fotogramas sustituidos antes de
@@ -187,14 +210,14 @@ una pantalla de 144 Hz cada fotograma dura 2 o 3 refrescos alternos
 (144/60 = 2,4), y ese ritmo irregular también afecta a la preview nativa.
 A 120 Hz cada fotograma dura exactamente 2 refrescos.
 
-Resultados del banco de pruebas en el Mac Studio M4 Max (lienzo 2560×1440 y
-canvas vertical de 1080×1920, sin carga de OBS):
+Resultados del banco de pruebas en un Mac con Apple M4 Max (lienzo
+2560×1440 y canvas vertical de 1080×1920, sin carga de OBS):
 
 | Medida | Valor |
 |---|---:|
 | Coste por callback, mediana | 20–25 µs |
 | Coste por callback, p99 | 0,17–0,47 ms |
-| Latencia hasta Core Animation, media | 19 ms |
+| Latencia hasta Core Animation, media | 19–22 ms |
 
 ## Limitaciones
 

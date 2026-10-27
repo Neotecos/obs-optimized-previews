@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -34,20 +34,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <algorithm>
 #include <cmath>
 
-#ifdef NBP_RENDERER_TIMING
+#ifdef OP_RENDERER_TIMING
 #include <util/platform.h>
-#define NBP_TIME_BEGIN(name) const uint64_t nbpStart_##name = os_gettime_ns()
-#define NBP_TIME_END(name) lastTiming.name = os_gettime_ns() - nbpStart_##name
+#define OP_TIME_BEGIN(name) const uint64_t opStart_##name = os_gettime_ns()
+#define OP_TIME_END(name) lastTiming.name = os_gettime_ns() - opStart_##name
 #else
-#define NBP_TIME_BEGIN(name) ((void)0)
-#define NBP_TIME_END(name) ((void)0)
+#define OP_TIME_BEGIN(name) ((void)0)
+#define OP_TIME_END(name) ((void)0)
 #endif
 
-namespace nbp {
+namespace op {
 
 namespace {
 
-const char *const kProfileRecreate = "nbp_recreate_surfaces";
+const char *const kProfileRecreate = "op_recreate_surfaces";
 
 /* Tiempo oculta tras el que se liberan las superficies (memoria de vídeo). */
 constexpr uint64_t kIdleReleaseNs = 10ULL * 1000000000ULL;
@@ -145,9 +145,9 @@ void PreviewRenderer::render(gs_texture_t *source, uint64_t frameTime)
 
 	Slot *slot = nullptr;
 	if (scaler_.ensure() && ensureResources(width, height)) {
-		NBP_TIME_BEGIN(acquire);
+		OP_TIME_BEGIN(acquire);
 		slot = acquireSlot();
-		NBP_TIME_END(acquire);
+		OP_TIME_END(acquire);
 	}
 
 	if (!slot) {
@@ -158,16 +158,16 @@ void PreviewRenderer::render(gs_texture_t *source, uint64_t frameTime)
 
 	lastFrameTime_ = frameTime;
 
-	NBP_TIME_BEGIN(draw);
+	OP_TIME_BEGIN(draw);
 	scaler_.draw(textureName(source), sourceWidth, sourceHeight, slot->fbo, width_, height_);
-	NBP_TIME_END(draw);
+	OP_TIME_END(draw);
 
 	/* La superficie se publicará cuando la GPU haya terminado. OBS hace
 	 * gs_flush() al final de cada mezcla y el primer sondeo usa
 	 * GL_SYNC_FLUSH_COMMANDS_BIT, así que aquí no hace falta glFlush(). */
-	NBP_TIME_BEGIN(fence);
+	OP_TIME_BEGIN(fence);
 	slot->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-	NBP_TIME_END(fence);
+	OP_TIME_END(fence);
 	slot->flushed = false;
 	slot->ready = false;
 	slot->serial = ++serial_;
@@ -178,7 +178,7 @@ void PreviewRenderer::render(gs_texture_t *source, uint64_t frameTime)
 
 void PreviewRenderer::poll()
 {
-	NBP_TIME_BEGIN(poll);
+	OP_TIME_BEGIN(poll);
 	Slot *newest = nullptr;
 
 	for (Slot &slot : slots_) {
@@ -201,7 +201,7 @@ void PreviewRenderer::poll()
 			newest = &slot;
 	}
 
-	NBP_TIME_END(poll);
+	OP_TIME_END(poll);
 	if (!newest)
 		return;
 
@@ -261,7 +261,7 @@ bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 		return false;
 
 	profile_start(kProfileRecreate);
-	NBP_TIME_BEGIN(recreate);
+	OP_TIME_BEGIN(recreate);
 
 	destroy();
 
@@ -304,7 +304,7 @@ bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 		obs_log(LOG_ERROR, "%s: no se pudieron crear las superficies %ux%u", profileName_, width, height);
 	}
 
-	NBP_TIME_END(recreate);
+	OP_TIME_END(recreate);
 	profile_end(kProfileRecreate);
 	return ok;
 }
@@ -340,4 +340,4 @@ void PreviewRenderer::destroy()
 	height_ = 0;
 }
 
-} // namespace nbp
+} // namespace op

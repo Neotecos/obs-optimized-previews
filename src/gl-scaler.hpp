@@ -1,5 +1,5 @@
 /*
-Non-Blocking Previews
+Optimized Previews
 Copyright (C) 2026 Alekstyle
 
 This program is free software; you can redistribute it and/or modify
@@ -20,12 +20,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <cstdint>
 
-namespace nbp {
+namespace op {
 
 /* Escalado de una textura GL_TEXTURE_2D de libobs a un framebuffer propio
  * con una sola pasada de un shader mínimo y llamadas GL directas.
  *
- * Medido en el hilo gráfico de OBS 33 (OpenGL sobre Metal, M4 Max), un
+ * Medido en el hilo gráfico de OBS 33 (OpenGL sobre Metal, Apple Silicon), un
  * dibujo así cuesta en CPU unas tres veces menos que glBlitFramebuffer o
  * que dibujar con libobs en un render target intermedio (tests/copy-probe).
  *
@@ -57,4 +57,4 @@ private:
 	bool failed_ = false;
 };
 
-} // namespace nbp
+} // namespace op

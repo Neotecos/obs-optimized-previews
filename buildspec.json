@@ -27,11 +27,11 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.alekstyle.obs.nonblocking-previews"
+            "bundleId": "com.alekstyle.obs.optimized-previews"
         }
     },
-    "name": "obs-nonblocking-previews",
-    "displayName": "Non-Blocking Previews",
+    "name": "obs-optimized-previews",
+    "displayName": "Optimized previews",
     "version": "0.1.0",
     "author": "Alekstyle",
     "website": "",
