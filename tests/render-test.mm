@@ -10,6 +10,7 @@ hilo gráfico.
 Uso: nbp-render-test [ruta/a/libobs-opengl.dylib]
 */
 
+#include "gl-scaler.hpp"
 #include "preview-renderer.hpp"
 #include "preview-shared.hpp"
 
@@ -31,8 +32,9 @@ namespace {
 constexpr uint32_t kCanvasWidth = 2560;
 constexpr uint32_t kCanvasHeight = 1440;
 
+nbp::GlScaler scaler;
 nbp::PreviewShared shared;
-nbp::PreviewRenderer renderer(shared, "nbp_test_preview");
+nbp::PreviewRenderer renderer(shared, scaler, "nbp_test_preview");
 
 /* Solo hilo gráfico mientras el callback está registrado. */
 std::vector<uint64_t> callbackNs;
@@ -42,7 +44,7 @@ uint64_t mainMatches = 0;
 /* Fase estable: tiempos por paso, sin los fotogramas que recrean superficies. */
 bool collectSteps = false;
 struct StepSamples {
-	std::vector<uint64_t> callback, poll, acquire, draw, blit, fence;
+	std::vector<uint64_t> callback, poll, acquire, draw, fence;
 } steps;
 
 int failures = 0;
@@ -77,11 +79,6 @@ void drawPattern(void *, uint32_t cx, uint32_t cy)
 	}
 }
 
-void drawMain(void *)
-{
-	obs_render_main_texture_src_color_only();
-}
-
 /* Misma lógica que el plugin para el lienzo principal. */
 void rendered(void *)
 {
@@ -98,8 +95,7 @@ void rendered(void *)
 	    renderer.wantsFrame(frameTime, obs_get_frame_interval_ns())) {
 		mainMatches++;
 		const uint64_t renderStart = os_gettime_ns();
-		renderer.render(gs_texture_get_width(mainTexture), gs_texture_get_height(mainTexture), drawMain,
-				nullptr, frameTime);
+		renderer.render(mainTexture, frameTime);
 		renderNs.push_back(os_gettime_ns() - renderStart);
 	}
 
@@ -112,7 +108,6 @@ void rendered(void *)
 		steps.poll.push_back(t.poll);
 		steps.acquire.push_back(t.acquire);
 		steps.draw.push_back(t.draw);
-		steps.blit.push_back(t.blit);
 		steps.fence.push_back(t.fence);
 	}
 }
@@ -300,8 +295,7 @@ int main(int argc, char **argv)
 			printStats("  callback", steps.callback);
 			printStats("  poll", steps.poll);
 			printStats("  acquire", steps.acquire);
-			printStats("  draw (libobs)", steps.draw);
-			printStats("  blit", steps.blit);
+			printStats("  draw (shader)", steps.draw);
 			printStats("  fence", steps.fence);
 		}
 		shared.requestedSize.store(0);
@@ -314,10 +308,11 @@ int main(int argc, char **argv)
 		       (unsigned long long)shared.framesPublished.load(),
 		       (unsigned long long)shared.framesSkippedBusy.load(), (unsigned long long)mainMatches);
 		printStats("callback completo", callbackNs);
-		printStats("render (dibujo+blit+fence)", renderNs);
+		printStats("render (dibujo+fence)", renderNs);
 
 		obs_enter_graphics();
 		renderer.destroy();
+		scaler.destroy();
 		obs_leave_graphics();
 
 		if (current)

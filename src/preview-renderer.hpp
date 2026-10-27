@@ -28,28 +28,28 @@ typedef struct __GLsync *GLsync;
 
 namespace nbp {
 
+class GlScaler;
+
 /* Productor de una previsualización. Todos los métodos se ejecutan en el
  * hilo gráfico de OBS con el contexto gráfico activo (dentro de un callback
  * de render) o, al descargar el módulo, dentro de obs_enter_graphics().
  *
- * Por fotograma: dibuja la textura del lienzo escalada en una textura
- * intermedia de libobs, la copia con glBlitFramebuffer a una IOSurface del
- * anillo y coloca un fence. En fotogramas posteriores comprueba los fences
- * con timeout 0 y publica la superficie más reciente ya terminada. */
+ * Por fotograma: escala la textura del lienzo con GlScaler directamente
+ * sobre una IOSurface libre del anillo y coloca un fence. En fotogramas
+ * posteriores comprueba los fences con timeout 0 y publica la superficie
+ * más reciente ya terminada. Nunca espera a la GPU ni al hilo principal. */
 class PreviewRenderer {
 public:
-	using DrawFn = void (*)(void *param);
-
-	PreviewRenderer(PreviewShared &shared, const char *profileName);
+	PreviewRenderer(PreviewShared &shared, GlScaler &scaler, const char *profileName);
 	PreviewRenderer(const PreviewRenderer &) = delete;
 	PreviewRenderer &operator=(const PreviewRenderer &) = delete;
 
 	/* ¿Hay que dibujar en este fotograma? (visible y dentro del límite de FPS) */
 	bool wantsFrame(uint64_t frameTime, uint64_t frameIntervalNs) const;
 
-	/* Dibuja `draw` (que pinta un lienzo de sourceWidth×sourceHeight en
-	 * coordenadas del lienzo) en una superficie libre del anillo. */
-	void render(uint32_t sourceWidth, uint32_t sourceHeight, DrawFn draw, void *param, uint64_t frameTime);
+	/* Escala `source` (textura 2D de libobs, ya renderizada en este
+	 * fotograma) sobre una superficie libre del anillo. */
+	void render(gs_texture *source, uint64_t frameTime);
 
 	/* Comprueba fences sin esperar y publica la superficie lista más nueva. */
 	void poll();
@@ -62,7 +62,7 @@ public:
 #ifdef NBP_RENDERER_TIMING
 	/* Solo para el banco de pruebas: duración de cada paso (ns). */
 	struct Timing {
-		uint64_t poll = 0, acquire = 0, draw = 0, blit = 0, fence = 0, recreate = 0;
+		uint64_t poll = 0, acquire = 0, draw = 0, fence = 0, recreate = 0;
 	};
 	Timing lastTiming{};
 #endif
@@ -81,15 +81,13 @@ private:
 	};
 
 	bool ensureResources(uint32_t width, uint32_t height);
-	void destroySlots();
 	Slot *acquireSlot();
 
 	PreviewShared &shared_;
+	GlScaler &scaler_;
 	const char *profileName_;
 
 	std::array<Slot, kRingSize> slots_{};
-	gs_texture *staging_ = nullptr;
-	unsigned int stagingFbo_ = 0;
 	uint32_t width_ = 0;
 	uint32_t height_ = 0;
 	bool failed_ = false;

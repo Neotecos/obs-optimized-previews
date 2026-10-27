@@ -18,9 +18,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "preview-renderer.hpp"
 
+#include "gl-scaler.hpp"
+
 #include <obs.h>
 #include <graphics/graphics.h>
-#include <graphics/vec4.h>
 #include <util/profiler.h>
 #include <plugin-support.h>
 
@@ -98,30 +99,11 @@ GLuint textureName(gs_texture_t *texture)
 	return object ? *static_cast<GLuint *>(object) : 0;
 }
 
-/* Guarda y restaura los enlaces de framebuffer GL que tocamos por fuera de
- * libobs, para que su seguimiento interno de estado siga siendo correcto. */
-class FramebufferBindingGuard {
-public:
-	FramebufferBindingGuard()
-	{
-		glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_);
-		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw_);
-	}
-	~FramebufferBindingGuard()
-	{
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(read_));
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(draw_));
-	}
-
-private:
-	GLint read_ = 0;
-	GLint draw_ = 0;
-};
-
 } // namespace
 
-PreviewRenderer::PreviewRenderer(PreviewShared &shared, const char *profileName)
+PreviewRenderer::PreviewRenderer(PreviewShared &shared, GlScaler &scaler, const char *profileName)
 	: shared_(shared),
+	  scaler_(scaler),
 	  profileName_(profileName)
 {
 }
@@ -141,11 +123,15 @@ bool PreviewRenderer::wantsFrame(uint64_t frameTime, uint64_t frameIntervalNs) c
 	return frameTime - lastFrameTime_ + frameIntervalNs / 2 >= interval;
 }
 
-void PreviewRenderer::render(uint32_t sourceWidth, uint32_t sourceHeight, DrawFn draw, void *param,
-			     uint64_t frameTime)
+void PreviewRenderer::render(gs_texture_t *source, uint64_t frameTime)
 {
 	const uint64_t requested = shared_.requestedSize.load(std::memory_order_relaxed);
-	if (!requested || !sourceWidth || !sourceHeight)
+	if (!requested || !source)
+		return;
+
+	const uint32_t sourceWidth = gs_texture_get_width(source);
+	const uint32_t sourceHeight = gs_texture_get_height(source);
+	if (!sourceWidth || !sourceHeight)
 		return;
 
 	profile_start(profileName_);
@@ -155,7 +141,7 @@ void PreviewRenderer::render(uint32_t sourceWidth, uint32_t sourceHeight, DrawFn
 	fitSize(requested, sourceWidth, sourceHeight, width, height);
 
 	Slot *slot = nullptr;
-	if (ensureResources(width, height)) {
+	if (scaler_.ensure() && ensureResources(width, height)) {
 		NBP_TIME_BEGIN(acquire);
 		slot = acquireSlot();
 		NBP_TIME_END(acquire);
@@ -169,64 +155,13 @@ void PreviewRenderer::render(uint32_t sourceWidth, uint32_t sourceHeight, DrawFn
 
 	lastFrameTime_ = frameTime;
 
-	/* 1. Dibujar el lienzo escalado en la textura intermedia (render target
-	 *    de libobs) con el mismo efecto que usa la previsualización de OBS. */
 	NBP_TIME_BEGIN(draw);
-	gs_texture_t *previousTarget = gs_get_render_target();
-	gs_zstencil_t *previousZStencil = gs_get_zstencil_target();
-	const enum gs_color_space previousSpace = gs_get_color_space();
-
-	gs_viewport_push();
-	gs_projection_push();
-	gs_matrix_push();
-	gs_matrix_identity();
-	gs_blend_state_push();
-
-	gs_set_render_target_with_color_space(staging_, nullptr, GS_CS_SRGB);
-	gs_set_viewport(0, 0, int(width_), int(height_));
-	gs_ortho(0.0f, float(sourceWidth), 0.0f, float(sourceHeight), -100.0f, 100.0f);
-
-	struct vec4 black;
-	vec4_set(&black, 0.0f, 0.0f, 0.0f, 1.0f);
-	gs_clear(GS_CLEAR_COLOR, &black, 1.0f, 0);
-
-	draw(param);
-
-	gs_blend_state_pop();
-	gs_set_render_target_with_color_space(previousTarget, previousZStencil, previousSpace);
-	gs_matrix_pop();
-	gs_projection_pop();
-	gs_viewport_pop();
+	scaler_.draw(textureName(source), sourceWidth, sourceHeight, slot->fbo, width_, height_);
 	NBP_TIME_END(draw);
 
-	/* 2. Copiar a la IOSurface (textura rectangular que libobs no admite
-	 *    como render target) con FBOs propios y llamadas GL directas. */
-	NBP_TIME_BEGIN(blit);
-	{
-		FramebufferBindingGuard bindings;
-
-		const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
-		const GLboolean srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
-		if (scissor)
-			glDisable(GL_SCISSOR_TEST);
-		if (srgb)
-			glDisable(GL_FRAMEBUFFER_SRGB);
-
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, stagingFbo_);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, slot->fbo);
-		glBlitFramebuffer(0, 0, GLint(width_), GLint(height_), 0, 0, GLint(width_), GLint(height_),
-				  GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-		if (srgb)
-			glEnable(GL_FRAMEBUFFER_SRGB);
-		if (scissor)
-			glEnable(GL_SCISSOR_TEST);
-	}
-	NBP_TIME_END(blit);
-
-	/* 3. Fence: la superficie se publicará cuando la GPU haya terminado.
-	 *    OBS hace gs_flush() al final de cada mezcla, y el primer sondeo
-	 *    usa GL_SYNC_FLUSH_COMMANDS_BIT, así que no hace falta glFlush aquí. */
+	/* La superficie se publicará cuando la GPU haya terminado. OBS hace
+	 * gs_flush() al final de cada mezcla y el primer sondeo usa
+	 * GL_SYNC_FLUSH_COMMANDS_BIT, así que aquí no hace falta glFlush(). */
 	NBP_TIME_BEGIN(fence);
 	slot->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 	NBP_TIME_END(fence);
@@ -313,7 +248,7 @@ PreviewRenderer::Slot *PreviewRenderer::acquireSlot()
 
 bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 {
-	if (staging_ && width == width_ && height == height_)
+	if (slots_[0].surface && width == width_ && height == height_)
 		return true;
 
 	const uint64_t packed = PreviewShared::packSize(width, height);
@@ -325,38 +260,32 @@ bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 
 	destroy();
 
-	bool ok = false;
-	{
-		FramebufferBindingGuard bindings;
+	GLint previousFramebuffer = 0;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
 
-		staging_ = gs_texture_create(width, height, GS_BGRA, 1, nullptr, GS_RENDER_TARGET);
-		if (staging_) {
-			glGenFramebuffers(1, &stagingFbo_);
-			glBindFramebuffer(GL_READ_FRAMEBUFFER, stagingFbo_);
-			glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-					       textureName(staging_), 0);
-			ok = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+	bool ok = true;
+	for (Slot &slot : slots_) {
+		slot.surface = createSurface(width, height);
+		if (slot.surface)
+			slot.texture = gs_texture_create_from_iosurface(slot.surface);
+		if (!slot.texture) {
+			ok = false;
+			break;
 		}
 
-		for (Slot &slot : slots_) {
-			if (!ok)
-				break;
-
-			slot.surface = createSurface(width, height);
-			if (slot.surface)
-				slot.texture = gs_texture_create_from_iosurface(slot.surface);
-			if (!slot.texture) {
-				ok = false;
-				break;
-			}
-
-			glGenFramebuffers(1, &slot.fbo);
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, slot.fbo);
-			glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE,
-					       textureName(slot.texture), 0);
-			ok = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+		/* La textura es GL_TEXTURE_RECTANGLE y libobs-opengl no la admite
+		 * como render target: se usa un FBO propio. */
+		glGenFramebuffers(1, &slot.fbo);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, slot.fbo);
+		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_RECTANGLE,
+				       textureName(slot.texture), 0);
+		if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+			ok = false;
+			break;
 		}
 	}
+
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(previousFramebuffer));
 
 	if (ok) {
 		width_ = width;
@@ -375,7 +304,7 @@ bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 	return ok;
 }
 
-void PreviewRenderer::destroySlots()
+void PreviewRenderer::destroy()
 {
 	for (Slot &slot : slots_) {
 		if (slot.fence)
@@ -389,20 +318,6 @@ void PreviewRenderer::destroySlots()
 		if (slot.surface)
 			CFRelease(slot.surface);
 		slot = Slot{};
-	}
-}
-
-void PreviewRenderer::destroy()
-{
-	destroySlots();
-
-	if (stagingFbo_) {
-		glDeleteFramebuffers(1, &stagingFbo_);
-		stagingFbo_ = 0;
-	}
-	if (staging_) {
-		gs_texture_destroy(staging_);
-		staging_ = nullptr;
 	}
 
 	width_ = 0;

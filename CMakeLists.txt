@@ -55,6 +55,8 @@ set_target_properties(
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
+    src/gl-scaler.hpp
+    src/gl-scaler.mm
     src/plugin-main.mm
     src/preview-dock.hpp
     src/preview-dock.mm
@@ -69,7 +71,7 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 option(NBP_BUILD_TESTS "Compila nbp-render-test" ON)
 set(NBP_OBS_APP "/Applications/OBS.app" CACHE PATH "OBS.app cuyas bibliotecas usa nbp-render-test")
 if(NBP_BUILD_TESTS)
-  add_executable(nbp-render-test tests/render-test.mm src/preview-renderer.mm)
+  add_executable(nbp-render-test tests/render-test.mm src/gl-scaler.mm src/preview-renderer.mm)
   target_include_directories(nbp-render-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(
     nbp-render-test
@@ -89,6 +91,27 @@ if(NBP_BUILD_TESTS)
     PROPERTIES
       XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
       # Sin hardened runtime para poder cargar las bibliotecas firmadas de OBS.app.
+      XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
+      XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${NBP_OBS_APP}/Contents/Frameworks"
+      BUILD_RPATH "${NBP_OBS_APP}/Contents/Frameworks"
+  )
+
+  add_executable(nbp-copy-probe tests/copy-probe.mm)
+  target_link_libraries(
+    nbp-copy-probe
+    PRIVATE
+      OBS::libobs
+      "$<LINK_LIBRARY:FRAMEWORK,CoreVideo.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,Foundation.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,IOSurface.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,OpenGL.framework>"
+  )
+  target_compile_definitions(nbp-copy-probe PRIVATE GL_SILENCE_DEPRECATION)
+  target_compile_features(nbp-copy-probe PRIVATE cxx_std_20)
+  set_target_properties(
+    nbp-copy-probe
+    PROPERTIES
+      XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
       XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
       XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${NBP_OBS_APP}/Contents/Frameworks"
       BUILD_RPATH "${NBP_OBS_APP}/Contents/Frameworks"

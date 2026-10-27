@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include "gl-scaler.hpp"
 #include "preview-dock.hpp"
 #include "preview-renderer.hpp"
 #include "preview-shared.hpp"
@@ -46,8 +47,9 @@ const char *const kProfileCallback = "nbp_rendered_callback";
 const char *const kProfileMain = "nbp_preview_main";
 
 struct Plugin {
+	nbp::GlScaler scaler;
 	nbp::PreviewShared mainShared;
-	nbp::PreviewRenderer mainRenderer{mainShared, kProfileMain};
+	nbp::PreviewRenderer mainRenderer{mainShared, scaler, kProfileMain};
 
 	QPointer<nbp::PreviewDock> mainDock;
 
@@ -58,11 +60,6 @@ struct Plugin {
 };
 
 Plugin *plugin = nullptr;
-
-void drawMainCanvas(void *)
-{
-	obs_render_main_texture_src_color_only();
-}
 
 /* Se ejecuta en el hilo gráfico al terminar de renderizar CADA mezcla de
  * vídeo (render_main_texture), no una vez por fotograma: el lienzo principal
@@ -92,8 +89,7 @@ void renderedCallback(void *)
 
 	if (target && target == mainTexture && p->mainRenderer.lastRenderedFrame() != frameTime &&
 	    p->mainRenderer.wantsFrame(frameTime, obs_get_frame_interval_ns())) {
-		p->mainRenderer.render(gs_texture_get_width(mainTexture), gs_texture_get_height(mainTexture),
-				       drawMainCanvas, nullptr, frameTime);
+		p->mainRenderer.render(mainTexture, frameTime);
 	}
 
 	profile_end(kProfileCallback);
@@ -153,6 +149,7 @@ void obs_module_unload(void)
 	 * contexto, que es el único momento en que este código lo toma. */
 	obs_enter_graphics();
 	plugin->mainRenderer.destroy();
+	plugin->scaler.destroy();
 	obs_leave_graphics();
 
 	os_unfair_lock_lock(&plugin->mainShared.lock);
