@@ -6,6 +6,7 @@
 !/cmake
 !/data
 !/src
+!/tests
 !.clang-format
 !.gersemirc
 !.gitignore
