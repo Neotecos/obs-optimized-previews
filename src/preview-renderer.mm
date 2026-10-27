@@ -49,6 +49,9 @@ namespace {
 
 const char *const kProfileRecreate = "nbp_recreate_surfaces";
 
+/* Tiempo oculta tras el que se liberan las superficies (memoria de vídeo). */
+constexpr uint64_t kIdleReleaseNs = 10ULL * 1000000000ULL;
+
 /* Tamaño de la imagen dentro del dock: proporciones del lienzo, sin superar
  * el área del dock ni el tamaño del propio lienzo. */
 void fitSize(uint64_t requested, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t &width, uint32_t &height)
@@ -302,6 +305,17 @@ bool PreviewRenderer::ensureResources(uint32_t width, uint32_t height)
 	NBP_TIME_END(recreate);
 	profile_end(kProfileRecreate);
 	return ok;
+}
+
+void PreviewRenderer::releaseIfIdle(uint64_t frameTime)
+{
+	if (!slots_[0].surface || shared_.requestedSize.load(std::memory_order_relaxed) != 0)
+		return;
+	if (frameTime - lastFrameTime_ < kIdleReleaseNs)
+		return;
+
+	destroy();
+	obs_log(LOG_INFO, "%s: superficies liberadas (previsualización oculta)", profileName_);
 }
 
 void PreviewRenderer::destroy()

@@ -55,11 +55,15 @@ set_target_properties(
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
+    src/canvas-tracker.hpp
+    src/canvas-tracker.mm
     src/gl-scaler.hpp
     src/gl-scaler.mm
     src/plugin-main.mm
     src/preview-dock.hpp
     src/preview-dock.mm
+    src/preview-coordinator.hpp
+    src/preview-coordinator.mm
     src/preview-renderer.hpp
     src/preview-renderer.mm
     src/preview-shared.hpp
@@ -71,7 +75,13 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 option(NBP_BUILD_TESTS "Compila nbp-render-test" ON)
 set(NBP_OBS_APP "/Applications/OBS.app" CACHE PATH "OBS.app cuyas bibliotecas usa nbp-render-test")
 if(NBP_BUILD_TESTS)
-  add_executable(nbp-render-test tests/render-test.mm src/gl-scaler.mm src/preview-renderer.mm)
+  add_executable(
+    nbp-render-test
+    tests/render-test.mm
+    src/gl-scaler.mm
+    src/preview-coordinator.mm
+    src/preview-renderer.mm
+  )
   target_include_directories(nbp-render-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(
     nbp-render-test
@@ -84,7 +94,7 @@ if(NBP_BUILD_TESTS)
       "$<LINK_LIBRARY:FRAMEWORK,IOSurface.framework>"
       "$<LINK_LIBRARY:FRAMEWORK,OpenGL.framework>"
   )
-  target_compile_definitions(nbp-render-test PRIVATE GL_SILENCE_DEPRECATION NBP_RENDERER_TIMING)
+  target_compile_definitions(nbp-render-test PRIVATE GL_SILENCE_DEPRECATION)
   target_compile_features(nbp-render-test PRIVATE cxx_std_20)
   set_target_properties(
     nbp-render-test

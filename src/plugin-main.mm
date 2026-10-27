@@ -16,20 +16,24 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include "gl-scaler.hpp"
+#include "canvas-tracker.hpp"
+#include "preview-coordinator.hpp"
 #include "preview-dock.hpp"
-#include "preview-renderer.hpp"
-#include "preview-shared.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
-#include <util/profiler.h>
+#include <util/bmem.h>
+#include <util/platform.h>
 #include <plugin-support.h>
 
-#include <QMainWindow>
+#include <QActionGroup>
+#include <QMenu>
 #include <QPointer>
+#include <QTimer>
 
-#include <atomic>
+#include <memory>
+#include <string>
+#include <vector>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -42,57 +46,147 @@ MODULE_EXPORT const char *obs_module_description(void)
 namespace {
 
 const char *const kDockMainId = "nbp-preview-main";
+const char *const kDockVerticalId = "nbp-preview-vertical";
 
-const char *const kProfileCallback = "nbp_rendered_callback";
-const char *const kProfileMain = "nbp_preview_main";
+const char *const kDefaultVerticalCanvas = "Aitum Vertical";
+
+struct Settings {
+	uint32_t mainFps = 0;
+	uint32_t verticalFps = 0;
+	std::string verticalName = kDefaultVerticalCanvas;
+	std::string verticalUuid;
+};
 
 struct Plugin {
-	nbp::GlScaler scaler;
-	nbp::PreviewShared mainShared;
-	nbp::PreviewRenderer mainRenderer{mainShared, scaler, kProfileMain};
+	nbp::PreviewCoordinator coordinator;
 
+	/* Solo hilo principal. */
+	Settings settings;
 	QPointer<nbp::PreviewDock> mainDock;
-
+	QPointer<nbp::PreviewDock> verticalDock;
+	std::unique_ptr<nbp::CanvasTracker> tracker;
+	QPointer<QTimer> rendererCheckTimer;
 	bool callbackRegistered = false;
-	/* Solo hilo gráfico. */
-	bool checkedRenderer = false;
-	bool unsupportedRenderer = false;
+	bool verticalFound = false;
 };
 
 Plugin *plugin = nullptr;
 
-/* Se ejecuta en el hilo gráfico al terminar de renderizar CADA mezcla de
- * vídeo (render_main_texture), no una vez por fotograma: el lienzo principal
- * se reconoce porque el render target actual es su textura. */
 void renderedCallback(void *)
 {
-	Plugin *p = plugin;
-	if (!p)
+	if (plugin)
+		plugin->coordinator.onRendered();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Hilo principal                                                         */
+
+std::string configPath()
+{
+	char *path = obs_module_config_path("settings.json");
+	std::string result = path ? path : "";
+	bfree(path);
+	return result;
+}
+
+void loadSettings(Settings &settings)
+{
+	const std::string path = configPath();
+	obs_data_t *data = obs_data_create_from_json_file_safe(path.c_str(), "bak");
+	if (!data)
 		return;
 
-	if (!p->checkedRenderer) {
-		p->checkedRenderer = true;
-		p->unsupportedRenderer = gs_get_device_type() != GS_DEVICE_OPENGL;
-		if (p->unsupportedRenderer)
-			obs_log(LOG_WARNING, "El renderizador no es OpenGL; las previsualizaciones quedan desactivadas");
+	obs_data_set_default_string(data, "vertical_canvas_name", kDefaultVerticalCanvas);
+	settings.mainFps = uint32_t(obs_data_get_int(data, "main_fps"));
+	settings.verticalFps = uint32_t(obs_data_get_int(data, "vertical_fps"));
+	settings.verticalName = obs_data_get_string(data, "vertical_canvas_name");
+	settings.verticalUuid = obs_data_get_string(data, "vertical_canvas_uuid");
+	obs_data_release(data);
+}
+
+void saveSettings(const Settings &settings)
+{
+	char *directory = obs_module_config_path("");
+	if (directory) {
+		os_mkdirs(directory);
+		bfree(directory);
 	}
-	if (p->unsupportedRenderer)
+
+	obs_data_t *data = obs_data_create();
+	obs_data_set_int(data, "main_fps", settings.mainFps);
+	obs_data_set_int(data, "vertical_fps", settings.verticalFps);
+	obs_data_set_string(data, "vertical_canvas_name", settings.verticalName.c_str());
+	obs_data_set_string(data, "vertical_canvas_uuid", settings.verticalUuid.c_str());
+	if (!obs_data_save_json_safe(data, configPath().c_str(), "tmp", "bak"))
+		obs_log(LOG_WARNING, "no se pudo guardar la configuración");
+	obs_data_release(data);
+}
+
+QString text(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
+
+void updateMessages()
+{
+	if (!plugin)
 		return;
 
-	profile_start(kProfileCallback);
+	const bool unsupported = plugin->coordinator.unsupportedRenderer.load();
+	if (plugin->mainDock)
+		plugin->mainDock->setMessage(unsupported ? text("Message.UnsupportedRenderer") : QString());
 
-	p->mainRenderer.poll();
+	if (!plugin->verticalDock)
+		return;
+	if (unsupported)
+		plugin->verticalDock->setMessage(text("Message.UnsupportedRenderer"));
+	else if (!plugin->verticalFound)
+		plugin->verticalDock->setMessage(
+			text("Message.CanvasMissing").arg(QString::fromStdString(plugin->settings.verticalName)));
+	else
+		plugin->verticalDock->setMessage(QString());
+}
 
-	const uint64_t frameTime = obs_get_video_frame_time();
-	gs_texture_t *target = gs_get_render_target();
-	gs_texture_t *mainTexture = obs_get_main_texture();
+/* Submenú del dock vertical para elegir el canvas. */
+void extendVerticalMenu(QMenu *menu)
+{
+	struct Entry {
+		std::string name;
+		std::string uuid;
+	};
+	std::vector<Entry> canvases;
+	obs_enum_canvases(
+		[](void *param, obs_canvas_t *canvas) {
+			if (!(obs_canvas_get_flags(canvas) & MAIN) && !obs_canvas_removed(canvas))
+				static_cast<std::vector<Entry> *>(param)->push_back(
+					{obs_canvas_get_name(canvas), obs_canvas_get_uuid(canvas)});
+			return true;
+		},
+		&canvases);
 
-	if (target && target == mainTexture && p->mainRenderer.lastRenderedFrame() != frameTime &&
-	    p->mainRenderer.wantsFrame(frameTime, obs_get_frame_interval_ns())) {
-		p->mainRenderer.render(mainTexture, frameTime);
+	QMenu *canvasMenu = menu->addMenu(text("Menu.Canvas"));
+	if (canvases.empty()) {
+		canvasMenu->addAction(text("Menu.Canvas.None"))->setEnabled(false);
+		return;
 	}
 
-	profile_end(kProfileCallback);
+	auto *group = new QActionGroup(canvasMenu);
+	for (const Entry &entry : canvases) {
+		QAction *action = canvasMenu->addAction(QString::fromStdString(entry.name));
+		action->setCheckable(true);
+		action->setChecked(entry.name == plugin->settings.verticalName);
+		group->addAction(action);
+		QObject::connect(action, &QAction::triggered, [entry]() {
+			if (!plugin)
+				return;
+			plugin->settings.verticalName = entry.name;
+			plugin->settings.verticalUuid = entry.uuid;
+			saveSettings(plugin->settings);
+			if (plugin->tracker)
+				plugin->tracker->setTarget(entry.name, entry.uuid);
+			updateMessages();
+		});
+	}
 }
 
 void removeRenderCallback()
@@ -105,13 +199,58 @@ void removeRenderCallback()
 	}
 }
 
+void logStatistics()
+{
+	obs_log(LOG_INFO, "horizontal: %llu fotogramas publicados, %llu sin superficie libre",
+		(unsigned long long)plugin->coordinator.mainShared.framesPublished.load(),
+		(unsigned long long)plugin->coordinator.mainShared.framesSkippedBusy.load());
+	obs_log(LOG_INFO, "vertical: %llu fotogramas publicados, %llu sin superficie libre",
+		(unsigned long long)plugin->coordinator.verticalShared.framesPublished.load(),
+		(unsigned long long)plugin->coordinator.verticalShared.framesSkippedBusy.load());
+}
+
+/* Cierre en el hilo principal mientras Qt sigue vivo. */
+void shutdownFrontend()
+{
+	if (!plugin)
+		return;
+
+	removeRenderCallback();
+	if (plugin->tracker) {
+		plugin->tracker->stopAfterCallbackRemoved();
+		plugin->tracker.reset();
+	}
+	if (plugin->rendererCheckTimer)
+		delete plugin->rendererCheckTimer.data();
+	if (plugin->mainDock)
+		plugin->mainDock->shutdown();
+	if (plugin->verticalDock)
+		plugin->verticalDock->shutdown();
+}
+
 void frontendEvent(enum obs_frontend_event event, void *)
 {
-	if (event == OBS_FRONTEND_EVENT_EXIT) {
-		removeRenderCallback();
-		if (plugin && plugin->mainDock)
-			plugin->mainDock->shutdown();
+	if (event == OBS_FRONTEND_EVENT_EXIT && plugin) {
+		logStatistics();
+		shutdownFrontend();
 	}
+}
+
+nbp::PreviewDock *addDock(const char *id, const char *titleKey, nbp::PreviewShared &shared, uint32_t &fpsSetting)
+{
+	auto *dock = new nbp::PreviewDock(shared);
+	QObject::connect(dock, &nbp::PreviewDock::fpsLimitSelected, dock, [&fpsSetting](unsigned int fps) {
+		fpsSetting = fps;
+		if (plugin)
+			saveSettings(plugin->settings);
+	});
+
+	if (!obs_frontend_add_dock_by_id(id, obs_module_text(titleKey), dock)) {
+		obs_log(LOG_ERROR, "no se pudo añadir el dock «%s»", id);
+		delete dock;
+		return nullptr;
+	}
+	return dock;
 }
 
 } // namespace
@@ -119,17 +258,51 @@ void frontendEvent(enum obs_frontend_event event, void *)
 bool obs_module_load(void)
 {
 	plugin = new Plugin();
+	loadSettings(plugin->settings);
+	nbp::PreviewCoordinator &coordinator = plugin->coordinator;
+	coordinator.mainShared.fpsLimit.store(plugin->settings.mainFps);
+	coordinator.verticalShared.fpsLimit.store(plugin->settings.verticalFps);
 
-	auto *mainDock = new nbp::PreviewDock(plugin->mainShared);
-	plugin->mainDock = mainDock;
-	if (!obs_frontend_add_dock_by_id(kDockMainId, obs_module_text("Dock.Main"), mainDock)) {
-		obs_log(LOG_ERROR, "No se pudo añadir el dock «%s»", kDockMainId);
-		delete mainDock;
-	}
+	plugin->mainDock = addDock(kDockMainId, "Dock.Main", coordinator.mainShared, plugin->settings.mainFps);
+	plugin->verticalDock =
+		addDock(kDockVerticalId, "Dock.Vertical", coordinator.verticalShared, plugin->settings.verticalFps);
+	if (plugin->verticalDock)
+		plugin->verticalDock->setMenuExtender(extendVerticalMenu);
+
+	plugin->tracker = std::make_unique<nbp::CanvasTracker>(coordinator.verticalCanvas, coordinator.relearnVertical,
+								 coordinator.graphicsCallbacks);
+	plugin->tracker->setTarget(plugin->settings.verticalName, plugin->settings.verticalUuid);
+	plugin->tracker->setStatusCallback([](bool found) {
+		if (!plugin)
+			return;
+		plugin->verticalFound = found;
+		updateMessages();
+	});
+	updateMessages();
 
 	obs_add_main_rendered_callback(renderedCallback, nullptr);
 	plugin->callbackRegistered = true;
 	obs_frontend_add_event_callback(frontendEvent, nullptr);
+
+	/* Vertical Canvas crea su canvas durante su propia carga; el
+	 * seguimiento empieza cuando el bucle de eventos ya está en marcha (y
+	 * las señales canvas_create cubren lo que llegue después). */
+	QTimer::singleShot(0, []() {
+		if (plugin && plugin->tracker)
+			plugin->tracker->start();
+	});
+
+	/* El tipo de renderizador solo se conoce en el hilo gráfico. */
+	auto *timer = new QTimer();
+	plugin->rendererCheckTimer = timer;
+	QObject::connect(timer, &QTimer::timeout, timer, [timer]() {
+		if (!plugin || !plugin->coordinator.checkedRenderer.load())
+			return;
+		if (plugin->coordinator.unsupportedRenderer.load())
+			updateMessages();
+		timer->deleteLater();
+	});
+	timer->start(1000);
 
 	obs_log(LOG_INFO, "plugin cargado (versión %s)", PLUGIN_VERSION);
 	return true;
@@ -141,27 +314,16 @@ void obs_module_unload(void)
 		return;
 
 	obs_frontend_remove_event_callback(frontendEvent, nullptr);
-	removeRenderCallback();
-	if (plugin->mainDock)
-		plugin->mainDock->shutdown();
+	shutdownFrontend();
 
 	/* El hilo gráfico ya está detenido; liberamos los recursos GL dentro del
 	 * contexto, que es el único momento en que este código lo toma. */
 	obs_enter_graphics();
-	plugin->mainRenderer.destroy();
-	plugin->scaler.destroy();
+	plugin->coordinator.destroyGraphics();
 	obs_leave_graphics();
-
-	os_unfair_lock_lock(&plugin->mainShared.lock);
-	if (plugin->mainShared.latest)
-		CFRelease(plugin->mainShared.latest);
-	plugin->mainShared.latest = nullptr;
-	os_unfair_lock_unlock(&plugin->mainShared.lock);
-
-	obs_log(LOG_INFO, "plugin descargado (horizontal: %llu publicados, %llu sin superficie libre)",
-		(unsigned long long)plugin->mainShared.framesPublished.load(),
-		(unsigned long long)plugin->mainShared.framesSkippedBusy.load());
+	plugin->coordinator.releasePublished();
 
 	delete plugin;
 	plugin = nullptr;
+	obs_log(LOG_INFO, "plugin descargado");
 }

@@ -54,6 +54,9 @@ public:
 	/* Comprueba fences sin esperar y publica la superficie lista más nueva. */
 	void poll();
 
+	/* Libera las superficies si la previsualización lleva un rato oculta. */
+	void releaseIfIdle(uint64_t frameTime);
+
 	/* Libera todos los recursos GL e IOSurface. */
 	void destroy();
 

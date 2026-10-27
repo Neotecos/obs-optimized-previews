@@ -22,6 +22,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/base.h>
 
 #include <OpenGL/gl3.h>
+#include <OpenGL/gl3ext.h>
+
+#ifndef GL_DECODE_EXT
+#define GL_DECODE_EXT 0x8A49
+#endif
 
 namespace nbp {
 
@@ -187,6 +192,9 @@ bool GlScaler::ensure()
 	glSamplerParameteri(sampler_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glSamplerParameteri(sampler_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glSamplerParameteri(sampler_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	/* El estado del sampler prevalece sobre el que libobs deja en la
+	 * textura: siempre se decodifica sRGB -> lineal al muestrear. */
+	glSamplerParameteri(sampler_, GL_TEXTURE_SRGB_DECODE_EXT, GL_DECODE_EXT);
 
 	return true;
 }

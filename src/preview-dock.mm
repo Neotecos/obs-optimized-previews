@@ -413,6 +413,9 @@ void PreviewDock::contextMenuEvent(QContextMenuEvent *event)
 		});
 	}
 
+	if (menuExtender_)
+		menuExtender_(&menu);
+
 	menu.exec(event->globalPos());
 }
 

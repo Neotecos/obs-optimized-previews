@@ -23,6 +23,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QString>
 #include <QWidget>
 
+#include <functional>
+
+class QMenu;
+
 namespace nbp {
 
 /* Contenido de un dock: un QWidget nativo que aloja un NSView con una capa
@@ -40,6 +44,9 @@ public:
 
 	/* Deja de presentar y de pedir fotogramas (al cerrar OBS). */
 	void shutdown();
+
+	/* Permite añadir entradas propias al menú contextual. */
+	void setMenuExtender(std::function<void(QMenu *)> extender) { menuExtender_ = std::move(extender); }
 
 	QPaintEngine *paintEngine() const override { return nullptr; }
 
@@ -59,6 +66,7 @@ private:
 	PreviewShared &shared_;
 	void *view_ = nullptr; /* NBPPreviewView *, retenido (CFBridgingRetain) */
 	QString message_;
+	std::function<void(QMenu *)> menuExtender_;
 	bool shutdown_ = false;
 };
 
