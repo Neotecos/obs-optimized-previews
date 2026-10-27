@@ -59,6 +59,8 @@ target_sources(
     src/canvas-tracker.mm
     src/gl-scaler.hpp
     src/gl-scaler.mm
+    src/native-integration.hpp
+    src/native-integration.mm
     src/plugin-main.mm
     src/preview-dock.hpp
     src/preview-dock.mm
@@ -135,6 +137,39 @@ if(NBP_BUILD_TESTS)
   target_compile_features(nbp-dock-test PRIVATE cxx_std_20)
   set_target_properties(
     nbp-dock-test
+    PROPERTIES
+      AUTOMOC ON
+      XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+      XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
+      XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${NBP_OBS_APP}/Contents/Frameworks"
+      BUILD_RPATH "${NBP_OBS_APP}/Contents/Frameworks"
+  )
+
+  add_executable(
+    nbp-integration-test
+    tests/integration-test.mm
+    src/native-integration.hpp
+    src/native-integration.mm
+    src/preview-dock.hpp
+    src/preview-dock.mm
+  )
+  target_include_directories(nbp-integration-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(
+    nbp-integration-test
+    PRIVATE
+      OBS::libobs
+      OBS::obs-frontend-api
+      plugin-support
+      Qt6::Core
+      Qt6::Widgets
+      "$<LINK_LIBRARY:FRAMEWORK,AppKit.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,IOSurface.framework>"
+      "$<LINK_LIBRARY:FRAMEWORK,QuartzCore.framework>"
+  )
+  target_compile_options(nbp-integration-test PRIVATE -Wno-quoted-include-in-framework-header -Wno-comma)
+  target_compile_features(nbp-integration-test PRIVATE cxx_std_20)
+  set_target_properties(
+    nbp-integration-test
     PROPERTIES
       AUTOMOC ON
       XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES

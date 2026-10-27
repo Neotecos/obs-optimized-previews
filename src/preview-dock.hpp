@@ -50,6 +50,9 @@ public:
 
 	QPaintEngine *paintEngine() const override { return nullptr; }
 
+	/* Tamaño mínimo cuando está en su propio dock. */
+	static constexpr QSize kMinimumSize{160, 90};
+
 signals:
 	void fpsLimitSelected(unsigned int fps);
 

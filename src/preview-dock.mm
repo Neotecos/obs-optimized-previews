@@ -320,7 +320,7 @@ PreviewDock::PreviewDock(PreviewShared &shared, QWidget *parent) : QWidget(paren
 	setAttribute(Qt::WA_OpaquePaintEvent);
 	setAttribute(Qt::WA_DontCreateNativeAncestors);
 	setAttribute(Qt::WA_NativeWindow);
-	setMinimumSize(160, 90);
+	setMinimumSize(kMinimumSize);
 
 	NBPPreviewView *view = [[NBPPreviewView alloc] initWithShared:&shared_];
 	view_ = (void *)CFBridgingRetain(view);
