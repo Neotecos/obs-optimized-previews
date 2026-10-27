@@ -35,6 +35,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
  * imagen anterior. Evita recrear superficies en cada paso de un arrastre. */
 static const CFTimeInterval kResizeSettleSeconds = 0.15;
 
+/* Si pasa más que esto entre dos fotogramas nuevos, se considera una pausa
+ * de la presentación y no se cuenta en las estadísticas de cadencia. */
+static const uint64_t kStatsPauseNs = 250ULL * 1000000ULL;
+
 @interface OPPreviewView : NSView
 - (instancetype)initWithShared:(op::PreviewShared *)shared;
 - (void)setQtVisible:(BOOL)visible;
@@ -49,6 +53,7 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 	IOSurfaceRef _current;
 	uint64_t _seenSerial;
 	uint64_t _lastFrameTime;
+	uint64_t _lastPresentTime;
 	uint64_t _pendingSize;
 	uint64_t _sentSize;
 	CFTimeInterval _pendingSince;
@@ -283,18 +288,26 @@ static const CFTimeInterval kResizeSettleSeconds = 0.15;
 		return;
 
 	const uint64_t now = os_gettime_ns();
-	if (frameTime && now > frameTime)
-		_shared->recordLatency(now - frameTime);
 
-	/* Huecos según el tiempo de vídeo de los fotogramas mostrados: con 60 FPS
-	 * deberían ir de 16,7 en 16,7 ms (o según el límite de FPS elegido). */
-	const uint64_t interval = obs_get_frame_interval_ns();
-	const uint32_t limit = _shared->fpsLimit.load(std::memory_order_relaxed);
-	const uint64_t expected = limit ? std::max<uint64_t>(interval, 1000000000ULL / limit) : interval;
-	if (_lastFrameTime && frameTime > _lastFrameTime && (frameTime - _lastFrameTime) * 2 > expected * 3)
-		_shared->presentGaps.fetch_add(1, std::memory_order_relaxed);
+	/* Las estadísticas solo cuentan la presentación continua. Tras una pausa
+	 * (preview oculta, integrada o desintegrada, dock movido), el primer
+	 * fotograma puede ser uno viejo y el salto de tiempo no es un hueco. */
+	const bool continuous = _lastPresentTime && now - _lastPresentTime < kStatsPauseNs;
+	if (continuous) {
+		if (frameTime && now > frameTime)
+			_shared->recordLatency(now - frameTime);
+
+		/* Huecos según el tiempo de vídeo de los fotogramas mostrados: con
+		 * 60 FPS deberían ir de 16,7 en 16,7 ms (o según el límite elegido). */
+		const uint64_t interval = obs_get_frame_interval_ns();
+		const uint32_t limit = _shared->fpsLimit.load(std::memory_order_relaxed);
+		const uint64_t expected = limit ? std::max<uint64_t>(interval, 1000000000ULL / limit) : interval;
+		if (_lastFrameTime && frameTime > _lastFrameTime && (frameTime - _lastFrameTime) * 2 > expected * 3)
+			_shared->presentGaps.fetch_add(1, std::memory_order_relaxed);
+		_shared->framesSuperseded.fetch_add(superseded, std::memory_order_relaxed);
+	}
 	_lastFrameTime = frameTime;
-	_shared->framesSuperseded.fetch_add(superseded, std::memory_order_relaxed);
+	_lastPresentTime = now;
 	_shared->framesPresented.fetch_add(1, std::memory_order_relaxed);
 
 	[CATransaction begin];
