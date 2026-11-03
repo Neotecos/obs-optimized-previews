@@ -68,13 +68,15 @@ render_main_texture() de cada mezcla          CADisplayLink de la preview
   Liberarla en el hilo gráfico, dentro del callback de render, interbloquearía
   `mixes_mutex`.
 - No modifica OBS ni otros plugins. El renderizado usa solo API pública de
-  OBS 33; la integración en el hueco de las previews nativas se apoya además
+  OBS 31.1.0 o posterior; la integración en el hueco de las previews nativas se apoya además
   en detalles de Qt (ver [Limitaciones](#limitaciones)).
 
 ## Requisitos
 
 - macOS 14 o posterior, Apple Silicon.
-- OBS Studio 33.0.0 o posterior, con el renderizador **OpenGL**. Con Metal,
+- OBS Studio 31.1.0 o posterior (probado con 31.1.0 y 33.0.1), con el
+  renderizador **OpenGL**. La API de canvas que usa el plugin no existe en
+  versiones anteriores. Con Metal,
   las previsualizaciones muestran un aviso y no dibujan nada.
 - Opcional: Vertical Canvas (Aitum) 1.6.x para la previsualización vertical.
 - Para compilar: Xcode 16 o posterior y CMake 3.28 o posterior.
