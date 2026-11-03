@@ -1,0 +1,11 @@
+{
+    "display_name": "Optimized previews",
+    "id": "b3b9f4c4-5d0e-4c1d-9a55-6a0c8b3a2f71",
+    "version": "@PLUGIN_VERSION@",
+    "authors": ["Alekstyle"],
+    "name": "obs-optimized-previews",
+    "description": "Read-only previews of the main canvas and the Aitum Vertical canvas, presented by Core Animation.",
+    "long_description": "Optimized read-only previews for the main and Aitum Vertical canvases that integrate into the native preview slot and avoid dropped frames while streaming or recording.",
+    "has_banner": false,
+    "has_icon": false
+}

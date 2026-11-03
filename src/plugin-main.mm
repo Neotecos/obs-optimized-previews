@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "preview-coordinator.hpp"
 #include "preview-dock.hpp"
 #include "settings-dialog.hpp"
+#include "update-checker.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -62,6 +63,7 @@ struct Settings {
 	bool mainIntegrated = false;
 	bool verticalIntegrated = false;
 	op::AutoSwitchSettings autoSwitch;
+	op::UpdateSettings updates;
 };
 
 struct Plugin {
@@ -124,6 +126,10 @@ void loadSettings(Settings &settings)
 	settings.autoSwitch.onRecordStart = obs_data_get_bool(data, "auto_on_record_start");
 	settings.autoSwitch.onStreamStop = obs_data_get_bool(data, "auto_off_stream_stop");
 	settings.autoSwitch.onRecordStop = obs_data_get_bool(data, "auto_off_record_stop");
+	obs_data_set_default_bool(data, "update_check_on_startup", true);
+	settings.updates.checkOnStartup = obs_data_get_bool(data, "update_check_on_startup");
+	settings.updates.lastCheck = obs_data_get_int(data, "update_last_check");
+	settings.updates.skippedVersion = obs_data_get_string(data, "update_skipped_version");
 	obs_data_release(data);
 }
 
@@ -146,6 +152,9 @@ void saveSettings(const Settings &settings)
 	obs_data_set_bool(data, "auto_on_record_start", settings.autoSwitch.onRecordStart);
 	obs_data_set_bool(data, "auto_off_stream_stop", settings.autoSwitch.onStreamStop);
 	obs_data_set_bool(data, "auto_off_record_stop", settings.autoSwitch.onRecordStop);
+	obs_data_set_bool(data, "update_check_on_startup", settings.updates.checkOnStartup);
+	obs_data_set_int(data, "update_last_check", settings.updates.lastCheck);
+	obs_data_set_string(data, "update_skipped_version", settings.updates.skippedVersion.c_str());
 	if (!obs_data_save_json_safe(data, configPath().c_str(), "tmp", "bak"))
 		obs_log(LOG_WARNING, "no se pudo guardar la configuración");
 	obs_data_release(data);
@@ -281,6 +290,7 @@ void shutdownFrontend()
 		return;
 
 	op::closeSettingsDialog();
+	op::updateCheckerShutdown();
 
 	removeRenderCallback();
 	if (plugin->tracker) {
@@ -420,12 +430,20 @@ bool obs_module_load(void)
 			if (!plugin)
 				return;
 			op::showSettingsDialog(static_cast<QWidget *>(obs_frontend_get_main_window()),
-					       plugin->settings.autoSwitch, []() {
+					       plugin->settings.autoSwitch, plugin->settings.updates, []() {
 						       if (plugin)
 							       saveSettings(plugin->settings);
 					       });
 		},
 		nullptr);
+
+	QTimer::singleShot(0, []() {
+		if (plugin)
+			op::updateCheckerCheckOnStartup(plugin->settings.updates, []() {
+				if (plugin)
+					saveSettings(plugin->settings);
+			});
+	});
 
 	/* Vertical Canvas crea su canvas durante su propia carga; el
 	 * seguimiento empieza cuando el bucle de eventos ya está en marcha (y

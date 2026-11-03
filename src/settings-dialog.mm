@@ -21,12 +21,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 
 #include <QCheckBox>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QPointer>
 #include <QVBoxLayout>
+
+#include <ctime>
 
 namespace op {
 
@@ -39,9 +43,14 @@ QString text(const char *key)
 
 QPointer<QDialog> openDialog;
 
+#ifndef PLUGIN_VISIBLE_VERSION_STRING
+#define PLUGIN_VISIBLE_VERSION_STRING "0"
+#endif
+
 } // namespace
 
-void showSettingsDialog(QWidget *parent, AutoSwitchSettings &settings, std::function<void()> onChanged)
+void showSettingsDialog(QWidget *parent, AutoSwitchSettings &settings, UpdateSettings &updates,
+			std::function<void()> onChanged)
 {
 	if (openDialog) {
 		openDialog->raise();
@@ -85,6 +94,62 @@ void showSettingsDialog(QWidget *parent, AutoSwitchSettings &settings, std::func
 	note->setEnabled(false);
 	groupLayout->addWidget(note);
 	layout->addWidget(group);
+
+	auto *updatesGroup = new QGroupBox(text("Settings.Updates"), dialog);
+	auto *updatesLayout = new QVBoxLayout(updatesGroup);
+
+	auto *startupCheck = new QCheckBox(text("Settings.UpdateCheck"), updatesGroup);
+	startupCheck->setChecked(updates.checkOnStartup);
+	startupCheck->setToolTip(text("Settings.UpdateCheck.Tooltip"));
+	QObject::connect(startupCheck, &QCheckBox::toggled, dialog, [&updates, onChanged](bool checked) {
+		updates.checkOnStartup = checked;
+		if (onChanged)
+			onChanged();
+	});
+	updatesLayout->addWidget(startupCheck);
+
+	auto *updateRow = new QHBoxLayout();
+	auto *button = new QPushButton(text("Settings.UpdateCheck.Button"), updatesGroup);
+	auto *status = new QLabel(text("Settings.UpdateCheck.Current") + QStringLiteral(PLUGIN_VISIBLE_VERSION_STRING),
+				  updatesGroup);
+	status->setWordWrap(true);
+	status->setOpenExternalLinks(true);
+	status->setTextInteractionFlags(Qt::TextBrowserInteraction);
+	updateRow->addWidget(button);
+	updateRow->addWidget(status, 1);
+	updatesLayout->addLayout(updateRow);
+
+	QObject::connect(button, &QPushButton::clicked, dialog,
+			 [dialog, button, status, &updates, onChanged]() {
+				 button->setEnabled(false);
+				 status->setText(text("Settings.UpdateCheck.Checking"));
+				 updates.lastCheck = static_cast<long long>(std::time(nullptr));
+				 if (onChanged)
+					 onChanged();
+
+				 QPointer<QDialog> self(dialog);
+				 updateCheckerCheck([self, button, status, &updates, onChanged](const OPUpdateResult &result) {
+					 if (!self)
+						 return;
+					 button->setEnabled(true);
+					 switch (result.status) {
+					 case OPUpdateResult::Status::Available:
+						 updateCheckerShowDialog(result, updates, onChanged);
+						 status->setText(text("Settings.UpdateCheck.Available")
+									 .arg(result.version.toHtmlEscaped(),
+									      result.url.toHtmlEscaped()));
+						 break;
+					 case OPUpdateResult::Status::UpToDate:
+						 status->setText(text("Settings.UpdateCheck.UpToDate")
+									 .arg(QStringLiteral(PLUGIN_VISIBLE_VERSION_STRING)));
+						 break;
+					 case OPUpdateResult::Status::Failed:
+						 status->setText(text("Settings.UpdateCheck.Failed"));
+						 break;
+					 }
+				 });
+			 });
+	layout->addWidget(updatesGroup);
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
 	QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);

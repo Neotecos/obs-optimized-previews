@@ -18,6 +18,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include "update-checker.hpp"
+
 #include <functional>
 
 class QWidget;
@@ -34,7 +36,8 @@ struct AutoSwitchSettings {
 
 /* Abre (o trae al frente) la ventana de opciones de Herramientas. Cada
  * cambio se aplica al momento y llama a `onChanged`. */
-void showSettingsDialog(QWidget *parent, AutoSwitchSettings &settings, std::function<void()> onChanged);
+void showSettingsDialog(QWidget *parent, AutoSwitchSettings &autoSwitch, UpdateSettings &updates,
+			std::function<void()> onChanged);
 
 /* Cierra la ventana si está abierta (al cerrar OBS). */
 void closeSettingsDialog();

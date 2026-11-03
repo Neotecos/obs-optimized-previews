@@ -32,6 +32,8 @@ target_link_libraries(
     OBS::obs-frontend-api
     Qt6::Core
     Qt6::Widgets
+    # libcurl del SDK de macOS, para buscar versiones nuevas.
+    curl
     "$<LINK_LIBRARY:FRAMEWORK,AppKit.framework>"
     "$<LINK_LIBRARY:FRAMEWORK,CoreVideo.framework>"
     "$<LINK_LIBRARY:FRAMEWORK,IOSurface.framework>"
@@ -71,9 +73,19 @@ target_sources(
     src/preview-shared.hpp
     src/settings-dialog.hpp
     src/settings-dialog.mm
+    src/update-checker.cpp
+    src/update-checker.hpp
+    src/version-compare.cpp
+    src/version-compare.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+# La versión visible es la de buildspec.json (la que muestra «Manage plugins»,
+# que lee manifest.json); la interna del bundle es el número de compilación.
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE PLUGIN_VISIBLE_VERSION_STRING="${PLUGIN_VERSION}")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in" "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" @ONLY)
+target_add_resource(${CMAKE_PROJECT_NAME} "${CMAKE_CURRENT_BINARY_DIR}/manifest.json")
 
 # Banco de pruebas del renderizador: libobs sin interfaz con el OpenGL de OBS.app.
 option(OP_BUILD_TESTS "Compila op-render-test" ON)
@@ -178,6 +190,18 @@ if(OP_BUILD_TESTS)
       XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
       XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${OP_OBS_APP}/Contents/Frameworks"
       BUILD_RPATH "${OP_OBS_APP}/Contents/Frameworks"
+  )
+
+  add_executable(op-version-compare-test tests/version-compare-test.cpp src/version-compare.cpp)
+  target_include_directories(op-version-compare-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(op-version-compare-test PRIVATE Qt6::Core)
+  target_compile_features(op-version-compare-test PRIVATE cxx_std_20)
+  set_target_properties(
+    op-version-compare-test
+    PROPERTIES
+      XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
+      BUILD_RPATH "${OP_OBS_APP}/Contents/Frameworks"
+      XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${OP_OBS_APP}/Contents/Frameworks"
   )
 
   add_executable(op-copy-probe tests/copy-probe.mm)
