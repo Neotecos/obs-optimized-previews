@@ -3,7 +3,11 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $version = (Get-Content buildspec.json | ConvertFrom-Json).version
 $build = "build_windows-$Architecture"
-cmake --preset "windows-$Architecture" -DOP_BUILD_TESTS=OFF
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vsVersion = & $vswhere -latest -products '*' -property installationVersion
+if (-not $vsVersion) { throw 'Visual Studio with the C++ desktop workload is required' }
+$generator = if ([version]$vsVersion -ge [version]'18.0') { 'Visual Studio 18 2026' } else { 'Visual Studio 17 2022' }
+cmake --preset "windows-$Architecture" -G $generator -DOP_BUILD_TESTS=OFF
 if ($LASTEXITCODE) { throw 'Configure failed' }
 cmake --build --preset "windows-$Architecture" --parallel
 if ($LASTEXITCODE) { throw 'Build failed' }

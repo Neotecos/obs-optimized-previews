@@ -18,7 +18,9 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/payload/Library/Application Support/obs-studio/plugins" release
 ditto "$bundle" "$root/payload/Library/Application Support/obs-studio/plugins/obs-optimized-previews.plugin"
-pkgbuild --identifier com.alekstyle.obs.optimized-previews --version "$version" \
+pkgbuild --analyze --root "$root/payload" "$root/components.plist"
+/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$root/components.plist"
+pkgbuild --component-plist "$root/components.plist" --identifier com.alekstyle.obs.optimized-previews --version "$version" \
   --root "$root/payload" --install-location / "$root/component.pkg"
 # User-domain package installs Library/ relative to the user's home.
 cat > "$root/distribution.xml" <<XML

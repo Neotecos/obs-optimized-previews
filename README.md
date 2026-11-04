@@ -1,10 +1,26 @@
-# Optimized previews para OBS Studio (macOS)
+# Optimized previews para OBS Studio
 
-Plugin de OBS Studio para macOS que sustituye las previsualizaciones de OBS y
-de Vertical Canvas (Aitum) por previsualizaciones de solo lectura presentadas
-por Core Animation, **sin que el hilo gráfico de OBS espere nunca al
-compositor de macOS**. Así las previsualizaciones dejan de provocar pérdidas
-de fotogramas de render.
+Plugin de OBS Studio para macOS, Windows y Linux que sustituye las
+previsualizaciones de OBS y de Vertical Canvas (Aitum) por previsualizaciones
+de solo lectura presentadas fuera de los displays de OBS.
+
+| Plataforma | Arquitecturas | Renderizador | Distribución |
+|---|---|---|---|
+| macOS 14+ | ARM64 e Intel x64 | OpenGL + IOSurface/Core Animation | PKG universal firmado con Developer ID |
+| Windows | x64 y ARM64 | Direct3D 11 + captura asíncrona + Qt | EXE instalador y ZIP por arquitectura |
+| Linux | x64 y ARM64 | OpenGL + captura asíncrona + Qt | TAR.GZ y DEB por arquitectura |
+
+La arquitectura del plugin debe coincidir con la de **OBS**, también al usar
+OBS x64 emulado sobre Windows ARM. OBS Studio mínimo: **31.1.0**.
+
+La implementación original de macOS mantiene la presentación por IOSurface.
+Windows y Linux escalan la textura ya compuesta, hacen la copia de GPU en un
+anillo de tres buffers y consultan su finalización sin esperar. El hilo Qt
+presenta la última imagen completa; no se vuelve a componer la escena. Esta
+vía tiene un coste de copia a CPU y no se atribuyen a ella los resultados de
+rendimiento medidos en macOS. El tamaño leído está limitado a 1920×1080,
+conservando la proporción, y el canvas adicional puede tener un fotograma más
+de latencia. La publicación usa `try_lock`: nunca espera al hilo Qt.
 
 - **Optimized Preview:** el lienzo principal (horizontal).
 - **Optimized Aitum Vertical Preview:** el canvas «Aitum Vertical» de
@@ -27,7 +43,7 @@ fotograma llega tarde y OBS lo pierde. Con una carga de producción exigente
 nativas pueden causar varios puntos porcentuales de fotogramas perdidos; sin
 ellas, ninguno.
 
-## Cómo funciona
+## Cómo funciona en macOS
 
 ```
 Hilo gráfico de OBS (nunca espera)            Hilo principal (Qt/AppKit)
@@ -73,31 +89,75 @@ render_main_texture() de cada mezcla          CADisplayLink de la preview
 
 ## Requisitos
 
-- macOS 14 o posterior, Apple Silicon.
-- OBS Studio 31.1.0 o posterior (probado con 31.1.0 y 33.0.1), con el
+- macOS 14 o posterior (Apple Silicon o Intel), Windows con Direct3D 11, o Linux con OpenGL 3.3 y soporte de sincronización ARB_sync.
+- En Linux, los binarios publicados usan Ubuntu 24.04 como base: glibc 2.39,
+  libstdc++ de GCC 13, Qt 6.4 y libepoxy. Para distribuciones con bibliotecas
+  anteriores, hay que recompilar el plugin o usar el paquete de su distribución.
+- OBS Studio 31.1.0 o posterior (probado con 31.1.0 y 33.0.1), En macOS requiere el
   renderizador **OpenGL**. La API de canvas que usa el plugin no existe en
   versiones anteriores. Con Metal,
   las previsualizaciones muestran un aviso y no dibujan nada.
 - Opcional: Vertical Canvas (Aitum) 1.6.x para la previsualización vertical.
-- Para compilar: Xcode 16 o posterior y CMake 3.28 o posterior.
+- Para compilar: CMake 3.28+; Xcode 16+ en macOS, Visual Studio 2022/2026
+  con el workload C++ en Windows, o GCC/Clang y Ninja en Linux.
 
-## Compilar
+## Compilar y generar releases
+
+Las releases se compilan contra el SDK de OBS **31.1.0**, con las dependencias
+oficiales de OBS del 23/05/2025. macOS y Windows las descargan y verifican con
+SHA-256. Los SDK y directorios de compilación están separados por arquitectura.
+Los bancos de pruebas son locales y están desactivados por defecto.
+
+macOS universal (incluye ambas arquitecturas):
 
 ```sh
-cmake --preset macos
-cmake --build --preset macos
+export CODESIGN_IDENT="Developer ID Application: Tu identidad (TEAMID)"
+export PKG_SIGN_IDENT="Developer ID Installer: Tu identidad (TEAMID)"
+# Opcional: perfil de credenciales de notarytool ya guardado en el llavero.
+export NOTARY_PROFILE="mi-perfil"
+packaging/package-macos.sh
 ```
 
-La primera configuración descarga en `.deps/` las fuentes de OBS 33.0.0 y las
-dependencias precompiladas de OBS (obs-deps y Qt 6 del 23/10/2026, las mismas
-que usa OBS 33.0.0), y compila libobs y obs-frontend-api. Tarda unos minutos.
+El script verifica las dos arquitecturas y las firmas. Si se indica
+`NOTARY_PROFILE`, también envía a Apple, espera la aceptación y adjunta el ticket.
+Sin ese perfil el PKG está firmado, pero no notarizado. Para desarrollo:
+`cmake --preset macos` y `cmake --build --preset macos`. También existen
+`macos-x64` y `macos-universal`.
 
-Resultado: `build_macos/RelWithDebInfo/obs-optimized-previews.plugin`
-(arm64, firma ad hoc).
+Windows, desde PowerShell (Visual Studio con el SDK Windows 10.0.20348+ y
+herramientas de la arquitectura elegida; Inno Setup 6.4+):
+
+```powershell
+./packaging/package-windows.ps1 -Architecture x64
+./packaging/package-windows.ps1 -Architecture arm64
+```
+
+El instalador EXE instala DLL, manifiesto y traducciones en
+`C:\ProgramData\obs-studio\plugins\obs-optimized-previews`. El ZIP sirve para
+instalaciones portables. Los EXE no llevan firma Authenticode.
+
+Linux, en un entorno reproducible basado en Ubuntu 24.04:
+
+```sh
+docker build -t op-linux-sdk -f packaging/linux.Dockerfile packaging
+docker run --rm -v "$PWD:/work" op-linux-sdk packaging/package-linux.sh
+```
+
+Usa un host ARM64 para ARM64 o x64 para x64. Desde Docker Desktop también se
+puede añadir `--platform linux/arm64` o `--platform linux/amd64` a **ambos**
+comandos para compilar con emulación. En un sistema con el SDK de OBS ya
+instalado, Qt 6, libepoxy y Ninja: `packaging/package-linux.sh` (opcionalmente
+`-DCMAKE_PREFIX_PATH=/ruta/al/sdk`). El script genera ambos formatos.
+
+Todos los artefactos quedan en `release/`. El workflow
+[Release builds](.github/workflows/release-builds.yml) compila las cinco
+combinaciones (macOS universal, Windows x64/ARM64, Linux x64/ARM64) y guarda
+artefactos de CI. La firma del PKG se realiza localmente usando el llavero;
+las claves privadas no se suben a CI. El workflow no publica releases.
 
 ### Bancos de pruebas
 
-Se compilan junto al plugin y usan las bibliotecas de `/Applications/OBS.app`
+Actívalos con `-DOP_BUILD_TESTS=ON` en macOS. Usan las bibliotecas de `/Applications/OBS.app`
 (libobs y OpenGL). Arrancan libobs sin interfaz y sin leer la configuración
 ni los perfiles de OBS. **No los ejecutes con OBS emitiendo**: los tres
 primeros añaden carga a la GPU.
@@ -111,16 +171,56 @@ primeros añaden carga a la GPU.
 
 ## Instalar
 
-Con OBS cerrado:
+Cierra OBS antes de instalar o actualizar.
+
+### macOS
+
+Abre el PKG universal firmado. Instala el bundle en
+`~/Library/Application Support/obs-studio/plugins/obs-optimized-previews.plugin`.
+Para instalación manual, copia allí el `.plugin` de la compilación.
+
+### Windows
+
+Ejecuta el EXE de la **arquitectura de OBS**. El directorio predeterminado es
+`C:\ProgramData\obs-studio\plugins`. Si usas OBS portable, selecciona su
+carpeta `data/plugins` o extrae allí el ZIP. Se requiere el runtime de Visual
+C++ de la arquitectura correspondiente, que también necesita OBS.
+
+### Linux
+
+**Instalación por usuario, OBS nativo de cualquier distribución compatible:**
+extrae el TAR.GZ de tu arquitectura en `${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins`.
 
 ```sh
-mkdir -p ~/Library/Application\ Support/obs-studio/plugins
-ditto build_macos/RelWithDebInfo/obs-optimized-previews.plugin ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
+tar -xzf obs-optimized-previews-0.1.0-linux-x64.tar.gz \
+  -C "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
 ```
+
+Sustituye `x64` por `arm64` cuando corresponda. El archivo contiene
+`obs-optimized-previews/bin/64bit/obs-optimized-previews.so` y
+`obs-optimized-previews/data/`. No incluye OBS ni Qt, que debe aportar el sistema.
+La ruta `64bit` también se utiliza en ARM64; no significa que sea código x64.
+
+**Debian/Ubuntu y derivados:** instala el DEB correspondiente con
+`sudo apt install ./obs-optimized-previews_0.1.0_amd64.deb` (o `_arm64.deb`).
+Instala el módulo en `/usr/lib/obs-plugins` y sus recursos en
+`/usr/share/obs/obs-plugins/obs-optimized-previews`; `apt` comprueba sus dependencias.
+No instales simultáneamente la copia por usuario y la del DEB.
+
+**OBS Flatpak:** requiere una extensión compilada para el runtime de OBS en
+Flathub; estos paquetes nativos no son una extensión Flatpak. No copies el
+DEB ni el TAR.GZ dentro del sandbox. La publicación en Flathub es un proceso
+separado. Es la distinción que hace la [guía oficial de plugins de OBS](https://obsproject.com/kb/plugins-guide).
 
 ## Desinstalar
 
-Con OBS cerrado:
+En Windows, usa Aplicaciones instaladas → Optimized Previews for OBS Studio.
+En Linux, `sudo apt remove obs-optimized-previews` si usaste DEB, o borra
+`${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/obs-optimized-previews`
+si usaste TAR.GZ. Las preferencias se conservan.
+
+En macOS, con OBS cerrado:
 
 ```sh
 rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
@@ -223,14 +323,15 @@ Resultados del banco de pruebas en un Mac con Apple M4 Max (lienzo
 
 ## Limitaciones
 
-- Solo el renderizador OpenGL. Con Metal, las previews no se dibujan.
-- SDR: con un lienzo HDR (Rec. 2100), la imagen no se adapta con tonemapping
+- macOS y Linux requieren OpenGL; Windows requiere Direct3D 11. En macOS con
+  Metal, las previews no se dibujan.
+- En la vía IOSurface de macOS: SDR; con un lienzo HDR (Rec. 2100), la imagen no se adapta con tonemapping
   como en la preview de OBS.
 - Solo visualización: no se pueden seleccionar ni mover fuentes, ni hay
   guías, zonas seguras o modo estudio.
 - El escalado es bilineal (con 4 muestras al reducir a la mitad o más), igual
   que la previsualización de OBS.
-- La identificación del canvas vertical se basa en un comportamiento de
+- En macOS, la identificación del canvas vertical se basa en un comportamiento de
   libobs-opengl (el parámetro sRGB que fija al enlazar texturas), no en una
   función documentada. Si una versión futura lo cambia, la preview vertical
   dejará de dibujarse y el log mostrará «no se identifica la textura del

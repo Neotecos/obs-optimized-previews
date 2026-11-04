@@ -72,7 +72,7 @@ function(target_install_resources target)
     install(
       DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/"
       DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${target}
-      USE_SOURCE_PERMISSIONS
+      USE_SOURCE_PERMISSIONS PATTERN ".DS_Store" EXCLUDE
     )
 
     add_custom_command(
