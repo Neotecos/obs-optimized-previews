@@ -16,7 +16,7 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 plugin="$root/obs-optimized-previews"
 mkdir -p "$plugin/bin/64bit" "$plugin/data" release
-cp "$build/obs-optimized-previews.so" "$plugin/bin/64bit/"
+cp "$build/stage/usr/lib/obs-plugins/obs-optimized-previews.so" "$plugin/bin/64bit/"
 cp -R data/locale "$plugin/data/"
 cp "$build/manifest.json" "$plugin/data/"
 cp LICENSE "$plugin/data/"
