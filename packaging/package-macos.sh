@@ -10,7 +10,8 @@ build=build_macos-universal
 cmake --preset macos-universal -DCODESIGN_IDENTITY="$CODESIGN_IDENT" -DOP_BUILD_TESTS=OFF
 cmake --build --preset macos-universal --parallel
 bundle="$build/Release/obs-optimized-previews.plugin"
-lipo -verify_arch arm64 x86_64 "$bundle/Contents/MacOS/obs-optimized-previews"
+lipo "$bundle/Contents/MacOS/obs-optimized-previews" -verify_arch arm64
+lipo "$bundle/Contents/MacOS/obs-optimized-previews" -verify_arch x86_64
 codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENT" "$bundle"
 codesign --verify --strict --verbose=2 "$bundle"
 root=$(mktemp -d)
