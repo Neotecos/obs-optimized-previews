@@ -11,7 +11,10 @@ build="build_linux-$arch"
 cmake --preset "linux-$arch" -DOP_BUILD_TESTS=OFF "$@"
 cmake --build --preset "linux-$arch" --parallel
 cmake --install "$build" --prefix "$PWD/$build/stage/usr"
-cpack --config "$build/CPackConfig.cmake" -G DEB
+# Keep CPack's temporary tree private to this architecture; x64 and ARM64
+# packaging may run concurrently in the same checkout.
+mkdir -p release
+cpack --config "$build/CPackConfig.cmake" -G DEB -B "$PWD/$build/packages"
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 plugin="$root/obs-optimized-previews"
