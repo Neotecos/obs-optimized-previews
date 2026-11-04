@@ -18,7 +18,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "canvas-tracker.hpp"
 #include "native-integration.hpp"
+#ifdef __APPLE__
 #include "preview-coordinator.hpp"
+#else
+#include "portable/preview-coordinator.hpp"
+#endif
 #include "preview-dock.hpp"
 #include "settings-dialog.hpp"
 #include "update-checker.hpp"
@@ -253,13 +257,13 @@ void logStatistics(const char *label, const op::PreviewShared &shared)
 	const uint64_t count = shared.latencyCount.load();
 	const double averageMs = count ? double(shared.latencySumNs.load()) / double(count) / 1e6 : 0.0;
 	obs_log(LOG_INFO,
-		"%s: %llu fotogramas publicados, %llu sin superficie libre, latencia hasta Core Animation "
+		"%s: %llu fotogramas publicados, %llu sin superficie libre, latencia hasta presentación "
 		"media %.1f ms, máxima %.1f ms",
 		label, (unsigned long long)shared.framesPublished.load(),
 		(unsigned long long)shared.framesSkippedBusy.load(), averageMs,
 		double(shared.latencyMaxNs.load()) / 1e6);
 	obs_log(LOG_INFO,
-		"%s: %llu fotogramas entregados a Core Animation, %llu sustituidos antes de mostrarse, "
+		"%s: %llu fotogramas presentados, %llu sustituidos antes de mostrarse, "
 		"%llu huecos de más de 1,5 fotogramas",
 		label, (unsigned long long)shared.framesPresented.load(),
 		(unsigned long long)shared.framesSuperseded.load(), (unsigned long long)shared.presentGaps.load());

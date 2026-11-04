@@ -6,7 +6,9 @@
 !/cmake
 !/data
 !/src
-!/tests
+!/packaging
+!/.github
+!/docs
 !.clang-format
 !.gersemirc
 !.gitignore
@@ -24,3 +26,5 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
+
+/tests/

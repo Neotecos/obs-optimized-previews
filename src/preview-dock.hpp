@@ -48,7 +48,11 @@ public:
 	/* Permite añadir entradas propias al menú contextual. */
 	void setMenuExtender(std::function<void(QMenu *)> extender) { menuExtender_ = std::move(extender); }
 
+#ifdef __APPLE__
 	QPaintEngine *paintEngine() const override { return nullptr; }
+#else
+	void paintEvent(QPaintEvent *event) override;
+#endif
 
 	/* Tamaño mínimo cuando está en su propio dock. */
 	static constexpr QSize kMinimumSize{160, 90};
@@ -63,8 +67,18 @@ protected:
 	void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
+#ifdef __APPLE__
 	void attachView();
 	void detachView();
+#else
+	void step();
+	QImage image_;
+	uint64_t seenSerial_ = 0;
+	uint64_t lastFrameTime_ = 0;
+	uint64_t lastPresentTime_ = 0;
+	uint64_t pendingSize_ = 0;
+	uint64_t pendingSince_ = 0;
+#endif
 
 	PreviewShared &shared_;
 	void *view_ = nullptr; /* OPPreviewView *, retenido (CFBridgingRetain) */

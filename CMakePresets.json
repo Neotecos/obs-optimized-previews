@@ -11,14 +11,17 @@
       "hidden": true,
       "cacheVariables": {
         "ENABLE_FRONTEND_API": true,
-        "ENABLE_QT": true
+        "ENABLE_QT": true,
+        "OP_BUILD_TESTS": false
       }
     },
     {
       "name": "macos",
       "displayName": "macOS arm64",
       "description": "Build for macOS 14.0+ (Apple Silicon)",
-      "inherits": ["template"],
+      "inherits": [
+        "template"
+      ],
       "binaryDir": "${sourceDir}/build_macos",
       "condition": {
         "type": "equals",
@@ -26,12 +29,101 @@
         "rhs": "Darwin"
       },
       "generator": "Xcode",
-      "warnings": {"dev": true, "deprecated": true},
+      "warnings": {
+        "dev": true,
+        "deprecated": true
+      },
       "cacheVariables": {
         "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CODESIGN_IDENTITY": "$penv{CODESIGN_IDENT}",
         "CODESIGN_TEAM": "$penv{CODESIGN_TEAM}"
+      }
+    },
+    {
+      "name": "macos-x64",
+      "inherits": [
+        "macos"
+      ],
+      "displayName": "macos-x64",
+      "binaryDir": "${sourceDir}/build_macos-x64",
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "x86_64"
+      }
+    },
+    {
+      "name": "macos-universal",
+      "inherits": [
+        "macos"
+      ],
+      "displayName": "macos-universal",
+      "binaryDir": "${sourceDir}/build_macos-universal",
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+      }
+    },
+    {
+      "name": "windows-x64",
+      "inherits": [
+        "template"
+      ],
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build_windows-x64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-arm64",
+      "inherits": [
+        "template"
+      ],
+      "generator": "Visual Studio 17 2022",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build_windows-arm64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-x64",
+      "inherits": [
+        "template"
+      ],
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_linux-x64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "CMAKE_INSTALL_LIBDIR": "lib"
+      }
+    },
+    {
+      "name": "linux-arm64",
+      "inherits": [
+        "template"
+      ],
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build_linux-arm64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INSTALL_PREFIX": "/usr",
+        "CMAKE_INSTALL_LIBDIR": "lib"
       }
     }
   ],
@@ -42,6 +134,36 @@
       "displayName": "macOS arm64",
       "description": "macOS build for Apple Silicon",
       "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "macos-x64",
+      "configurePreset": "macos-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "macos-universal",
+      "configurePreset": "macos-universal",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-x64",
+      "configurePreset": "windows-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-arm64",
+      "configurePreset": "windows-arm64",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-arm64",
+      "configurePreset": "linux-arm64",
+      "configuration": "Release"
     }
   ]
 }

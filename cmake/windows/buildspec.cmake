@@ -6,10 +6,13 @@ include(buildspec_common)
 
 # _check_dependencies_windows: Set up Windows slice for _check_dependencies
 function(_check_dependencies_windows)
-  set(arch ${CMAKE_VS_PLATFORM_NAME})
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/buildspec.json" buildspec)
+  string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" arch)
   set(platform windows-${arch})
 
-  set(dependencies_dir "${CMAKE_CURRENT_SOURCE_DIR}/.deps")
+  string(JSON sdk_version GET ${buildspec} dependencies obs-studio version)
+  set(dependencies_dir "${CMAKE_CURRENT_SOURCE_DIR}/.deps/sdk-${sdk_version}-${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_OSX_ARCHITECTURES}${CMAKE_VS_PLATFORM_NAME}")
+  string(REPLACE ";" "_" dependencies_dir "${dependencies_dir}")
   set(prebuilt_filename "windows-deps-VERSION-ARCH-REVISION.zip")
   set(prebuilt_destination "obs-deps-VERSION-ARCH")
   set(qt6_filename "windows-deps-qt6-VERSION-ARCH-REVISION.zip")

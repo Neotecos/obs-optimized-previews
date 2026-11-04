@@ -21,8 +21,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 #include <cstdint>
 
+#ifdef __APPLE__
 #include <IOSurface/IOSurfaceRef.h>
 #include <os/lock.h>
+#else
+#include <QImage>
+#include <mutex>
+#endif
 
 namespace op {
 
@@ -44,6 +49,7 @@ struct PreviewShared {
 	std::atomic<uint32_t> fpsLimit{0};
 
 	/* Hilo gráfico -> hilo principal, protegido por `lock`. */
+#ifdef __APPLE__
 	os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
 	/* Última superficie completa (su fence ya está señalado). Retenida. */
 	IOSurfaceRef latest = nullptr;
@@ -54,6 +60,13 @@ struct PreviewShared {
 	/* Superficie que el hilo principal ha puesto en su CALayer (solo como
 	 * identidad, sin retener): el hilo gráfico no la reutiliza. */
 	IOSurfaceRef displayed = nullptr;
+
+#else
+	std::mutex lock;
+	QImage latest;
+	uint64_t latestSerial = 0;
+	uint64_t latestFrameTime = 0;
+#endif
 
 	/* Estadísticas (solo informativas). */
 	std::atomic<uint64_t> framesPublished{0};

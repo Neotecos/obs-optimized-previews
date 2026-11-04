@@ -23,7 +23,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/bmem.h>
 
-#include <curl/curl.h>
+#include <QEventLoop>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QTimer>
 
 #include <QCoreApplication>
 #include <QDialog>
@@ -64,52 +68,37 @@ struct Worker {
 std::unique_ptr<Worker> g_worker;
 bool g_startup_check_done = false;
 
-size_t write_body(char *data, size_t size, size_t count, void *user)
-{
-	auto *body = static_cast<std::string *>(user);
-	const size_t bytes = size * count;
-	if (body->size() + bytes > kMaxResponseBytes)
-		return 0;
-	body->append(data, bytes);
-	return bytes;
-}
-
-int check_cancelled(void *user, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
-{
-	return static_cast<std::atomic<bool> *>(user)->load() ? 1 : 0;
-}
-
 bool fetch_latest_release(std::atomic<bool> &cancelled, std::string &body)
 {
-	CURL *curl = curl_easy_init();
-	if (!curl)
-		return false;
-
-	const std::string user_agent = std::string("obs-optimized-previews/") + PLUGIN_VISIBLE_VERSION_STRING;
-	curl_slist *headers = nullptr;
-	headers = curl_slist_append(headers, "Accept: application/vnd.github+json");
-	headers = curl_slist_append(headers, "X-GitHub-Api-Version: 2022-11-28");
-
-	curl_easy_setopt(curl, CURLOPT_URL, kReleasesApi);
-	curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent.c_str());
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_body);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, check_cancelled);
-	curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &cancelled);
-
-	const CURLcode result = curl_easy_perform(curl);
-	long status = 0;
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-
-	curl_slist_free_all(headers);
-	curl_easy_cleanup(curl);
-	return result == CURLE_OK && status == 200;
+	QNetworkAccessManager manager;
+	QNetworkRequest request{QUrl(QString::fromLatin1(kReleasesApi))};
+	request.setRawHeader("User-Agent", QByteArray("obs-optimized-previews/") + PLUGIN_VISIBLE_VERSION_STRING);
+	request.setRawHeader("Accept", "application/vnd.github+json");
+	request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
+	request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+	request.setTransferTimeout(10000);
+	auto *reply = manager.get(request);
+	QEventLoop loop;
+	QTimer cancelTimer, deadline;
+	deadline.setSingleShot(true);
+	QObject::connect(&deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
+	QObject::connect(&cancelTimer, &QTimer::timeout, reply, [&]() {
+		if (cancelled.load())
+			reply->abort();
+	});
+	QObject::connect(reply, &QNetworkReply::readyRead, reply, [&]() {
+		const QByteArray chunk = reply->readAll();
+		if (body.size() + size_t(chunk.size()) > kMaxResponseBytes)
+			reply->abort();
+		else
+			body.append(chunk.constData(), size_t(chunk.size()));
+	});
+	QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+	cancelTimer.start(50);
+	deadline.start(10000);
+	loop.exec();
+	return !cancelled.load() && reply->error() == QNetworkReply::NoError &&
+	       reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
 }
 
 void stop_worker()

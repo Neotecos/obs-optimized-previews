@@ -1,0 +1,74 @@
+name: Release builds
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/cross-platform-releases']
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --version=6.4.3 -y --no-progress
+      - name: Build release and installer
+        shell: pwsh
+        run: ./packaging/package-windows.ps1 -Architecture ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline OBS SDK
+        run: docker build -t op-linux-sdk -f packaging/linux.Dockerfile packaging
+      - name: Build release and packages
+        run: docker run --rm -v "$PWD:/work" op-linux-sdk packaging/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal release
+        run: |
+          cmake --preset macos-universal -DOP_BUILD_TESTS=OFF
+          cmake --build --preset macos-universal --parallel
+          lipo -verify_arch arm64 x86_64 build_macos-universal/Release/obs-optimized-previews.plugin/Contents/MacOS/obs-optimized-previews
+          mkdir -p release
+          ditto -c -k --keepParent build_macos-universal/Release/obs-optimized-previews.plugin release/obs-optimized-previews-macos-universal.zip
+      # Developer ID signing and PKG notarization run locally with keychain
+      # identities via packaging/package-macos.sh; no private keys are uploaded.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal-build
+          path: release/*
+          if-no-files-found: error
