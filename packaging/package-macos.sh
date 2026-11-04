@@ -19,7 +19,16 @@ trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/payload/Library/Application Support/obs-studio/plugins" release
 ditto "$bundle" "$root/payload/Library/Application Support/obs-studio/plugins/obs-optimized-previews.plugin"
 pkgbuild --analyze --root "$root/payload" "$root/components.plist"
-/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$root/components.plist"
+python3 - "$root/components.plist" <<'PYCOMPONENTS'
+import plistlib, sys
+path = sys.argv[1]
+with open(path, 'rb') as stream:
+    components = plistlib.load(stream)
+for component in components:
+    component['BundleIsRelocatable'] = False
+with open(path, 'wb') as stream:
+    plistlib.dump(components, stream)
+PYCOMPONENTS
 pkgbuild --component-plist "$root/components.plist" --identifier com.alekstyle.obs.optimized-previews --version "$version" \
   --root "$root/payload" --install-location / "$root/component.pkg"
 # User-domain package installs Library/ relative to the user's home.
