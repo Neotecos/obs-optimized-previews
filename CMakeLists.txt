@@ -13,7 +13,7 @@ option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
 option(ENABLE_QT "Use Qt functionality" ON)
 
 if(NOT ENABLE_FRONTEND_API OR NOT ENABLE_QT)
-  message(FATAL_ERROR "${_name} necesita obs-frontend-api y Qt (los docks son widgets Qt)")
+  message(FATAL_ERROR "${_name} requires obs-frontend-api and Qt (the docks are Qt widgets)")
 endif()
 
 include(compilerconfig)
@@ -80,15 +80,15 @@ endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 
-# La versión visible es la de buildspec.json (la que muestra «Manage plugins»,
-# que lee manifest.json); la interna del bundle es el número de compilación.
+# The visible version comes from buildspec.json via manifest.json for Manage
+# Plugins; the bundle internal version is the build number.
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE PLUGIN_VISIBLE_VERSION_STRING="${PLUGIN_VERSION}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/manifest.json.in" "${CMAKE_CURRENT_BINARY_DIR}/manifest.json" @ONLY)
 target_add_resource(${CMAKE_PROJECT_NAME} "${CMAKE_CURRENT_BINARY_DIR}/manifest.json")
 
-# Banco de pruebas del renderizador: libobs sin interfaz con el OpenGL de OBS.app.
+# Local renderer tests use headless libobs and the OpenGL renderer from OBS.app.
 option(OP_BUILD_TESTS "Build local macOS renderer tests" OFF)
-set(OP_OBS_APP "/Applications/OBS.app" CACHE PATH "OBS.app cuyas bibliotecas usa op-render-test")
+set(OP_OBS_APP "/Applications/OBS.app" CACHE PATH "OBS.app supplying the libraries used by op-render-test")
 if(OP_BUILD_TESTS AND APPLE)
   add_executable(
     op-render-test
@@ -115,7 +115,7 @@ if(OP_BUILD_TESTS AND APPLE)
     op-render-test
     PROPERTIES
       XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
-      # Sin hardened runtime para poder cargar las bibliotecas firmadas de OBS.app.
+      # Disable hardened runtime so the test can load the signed OBS.app libraries.
       XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME NO
       XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${OP_OBS_APP}/Contents/Frameworks"
       BUILD_RPATH "${OP_OBS_APP}/Contents/Frameworks"

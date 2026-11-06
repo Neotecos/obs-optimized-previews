@@ -1,354 +1,419 @@
-# Optimized previews para OBS Studio
+# Optimized Previews for OBS Studio
 
-Plugin de OBS Studio para macOS, Windows y Linux que sustituye las
-previsualizaciones de OBS y de Vertical Canvas (Aitum) por previsualizaciones
-de solo lectura presentadas fuera de los displays de OBS.
+An OBS Studio plugin for macOS, Windows, and Linux that replaces the OBS and
+Vertical Canvas (Aitum) previews with read-only previews presented independently
+of the OBS preview displays.
 
-| Plataforma | Arquitecturas | Renderizador | Distribución |
+| Platform | Architectures | Renderer | Release packages |
 |---|---|---|---|
-| macOS 14+ | ARM64 e Intel x64 | OpenGL + IOSurface/Core Animation | PKG universal firmado con Developer ID |
-| Windows | x64 y ARM64 | Direct3D 11 + captura asíncrona + Qt | EXE instalador y ZIP por arquitectura |
-| Linux | x64 y ARM64 | OpenGL + captura asíncrona + Qt | TAR.GZ y DEB por arquitectura |
+| macOS 14+ | ARM64 and Intel x64 | OpenGL with IOSurface/Core Animation | Signed and notarized universal PKG |
+| Windows | x64 and ARM64 | Direct3D 11 with asynchronous readback and Qt | EXE installer and ZIP for each architecture |
+| Linux | x64 and ARM64 | OpenGL with asynchronous readback and Qt | TAR.GZ and DEB for each architecture |
 
-La arquitectura del plugin debe coincidir con la de **OBS**, también al usar
-OBS x64 emulado sobre Windows ARM. OBS Studio mínimo: **31.1.0**.
+Requires **OBS Studio 31.1.0 or later**. The plugin architecture must match the
+architecture of **OBS**, including when running x64 OBS under emulation on
+Windows ARM.
 
-La implementación original de macOS mantiene la presentación por IOSurface.
-Windows y Linux escalan la textura ya compuesta, hacen la copia de GPU en un
-anillo de tres buffers y consultan su finalización sin esperar. El hilo Qt
-presenta la última imagen completa; no se vuelve a componer la escena. Esta
-vía tiene un coste de copia a CPU y no se atribuyen a ella los resultados de
-rendimiento medidos en macOS. El tamaño leído está limitado a 1920×1080,
-conservando la proporción, y el canvas adicional puede tener un fotograma más
-de latencia. La publicación usa `try_lock`: nunca espera al hilo Qt.
+- **Optimized Preview:** the main, horizontal canvas.
+- **Optimized Aitum Vertical Preview:** the “Aitum Vertical” canvas from Vertical
+  Canvas, or another additional canvas you select.
 
-- **Optimized Preview:** el lienzo principal (horizontal).
-- **Optimized Aitum Vertical Preview:** el canvas «Aitum Vertical» de
-  Vertical Canvas, o cualquier otro canvas que elijas.
+The previews can replace the native previews in their existing slots or appear
+in separate docks. They are read-only: sources cannot be selected or moved.
+Vertical Canvas is optional; the horizontal preview works without it.
 
-Pueden ocupar el mismo hueco que la previsualización nativa o ir en docks
-propios. Son solo para visualizar: no permiten seleccionar ni mover fuentes.
-Vertical Canvas es opcional: sin él, la previsualización horizontal funciona
-igual.
+## Testing status
 
-## Por qué
+The following status reflects manual testing reported by the maintainer:
 
-En macOS con el renderizador OpenGL, OBS presenta cada previsualización
-dentro de su hilo gráfico (`render_displays()` → `device_present()`:
-`glFlush`, cambio de contexto, `glBlitFramebuffer` y
-`[NSOpenGLContext flushBuffer]`). Ese hilo tiene que entregar un fotograma
-cada 16,67 ms (a 60 FPS). Cuando la presentación espera al compositor, el
-fotograma llega tarde y OBS lo pierde. Con una carga de producción exigente
-(emisión multipista, grabación, varias salidas), las previsualizaciones
-nativas pueden causar varios puntos porcentuales de fotogramas perdidos; sin
-ellas, ninguno.
+| Platform | Manual testing status |
+|---|---|
+| macOS ARM64 / Apple Silicon | The PKG has been tested successfully. |
+| macOS Intel x64 | Not yet tested on an Intel Mac. The universal PKG includes the Intel build. |
+| Windows x64 | Confirmed working correctly. |
+| Windows ARM64 | Not yet tested manually. |
+| Linux x64 and ARM64 | Not yet tested manually. |
 
-## Cómo funciona en macOS
+The Intel, Windows ARM64, and Linux builds are available for testing. Earlier
+build validation included macOS render checks against OBS 31.1.0 and 33.0.1,
+an Intel build check under Rosetta, and Linux render checks using Mesa llvmpipe
+in containers. These automated checks do not establish the manual installation
+and real-world compatibility status of those platforms.
 
+## Why
+
+With the macOS OpenGL renderer, OBS presents each native preview inside its
+graphics thread (`render_displays()` → `device_present()`: `glFlush`, context
+switching, `glBlitFramebuffer`, and `[NSOpenGLContext flushBuffer]`). At 60 FPS,
+that thread must deliver a frame every 16.67 ms. If presentation waits for the
+window compositor, the frame can arrive late and OBS drops it.
+
+Under demanding production workloads, including multitrack streaming,
+recording, and multiple outputs, native previews have been observed to cause
+several percentage points of rendering lag. Disabling those previews removed
+that lag in the measured setup. Results depend on the workload and hardware.
+
+## How it works
+
+### macOS
+
+```text
+OBS graphics thread                          Main thread (Qt/AppKit)
+──────────────────────────────────           ──────────────────────────
+render_main_texture() for each mix           Preview CADisplayLink
+ └ plugin's rendered callback                ├ reads the latest ready IOSurface
+    ├ main canvas or vertical canvas?         │  (a very short lock; the graphics
+    ├ custom shader: canvas texture ──►       │   thread only uses trylock)
+    │  free IOSurface in an 8-slot ring       └ CALayer.contents = IOSurface
+    ├ glFenceSync                                 (Core Animation composes it
+    └ polls older fences with timeout 0:           outside OBS)
+       publishes the newest completed frame
 ```
-Hilo gráfico de OBS (nunca espera)            Hilo principal (Qt/AppKit)
-──────────────────────────────────            ──────────────────────────
-render_main_texture() de cada mezcla          CADisplayLink de la preview
- └ callback «rendered» del plugin              ├ lee la última IOSurface lista
-    ├ ¿la mezcla es el lienzo principal         │  (cerrojo de unas instrucciones;
-    │  o el canvas vertical?                   │   el hilo gráfico solo usa trylock)
-    ├ shader propio: textura del lienzo ──►    └ CALayer.contents = IOSurface
-    │  IOSurface libre de un anillo de 8           (Core Animation la compone
-    ├ glFenceSync                                    fuera de OBS)
-    └ fences anteriores con timeout 0:
-       la más reciente terminada se publica
+
+- Each preview is drawn **once per video frame**, in its own mix's callback,
+  immediately after composition. No scene is rendered again.
+- Scaling uses a single shader pass directly into the IOSurface, with bilinear
+  filtering in linear space and four samples for reductions of 2:1 or greater.
+  libobs IOSurface textures cannot be used as render targets, so the plugin
+  uses its own FBOs and direct OpenGL calls, saving and restoring every state it
+  changes. In the original measurements, this path took roughly one third of
+  the CPU time of `glBlitFramebuffer` or drawing through an intermediate libobs
+  texture.
+- A surface is reused only after its fence has completed, when it is neither
+  published nor displayed, and when `IOSurfaceIsInUse()` indicates that
+  WindowServer has stopped composing it. If no surface is free, the plugin
+  skips a preview frame rather than delaying OBS.
+- The vertical canvas texture is identified without relying on its dimensions:
+  Source Record and multitrack mixes can create textures of the same size.
+  libobs-opengl sets `GL_TEXTURE_SRGB_DECODE_EXT` whenever it binds a texture
+  for drawing. The plugin marks a candidate, draws the canvas into a 2×2 target
+  through the public `obs_render_canvas_texture_src_color_only()` API, and
+  checks whether the marker changed. Verification runs every five seconds and
+  after a canvas `video_reset`.
+- The main thread retains the strong reference to the vertical canvas.
+  Releasing it in a graphics callback would deadlock `mixes_mutex`.
+
+### Windows and Linux
+
+Windows and Linux scale the already composed canvas texture, copy it through a
+three-slot staging ring, and poll GPU completion without waiting. Qt presents
+the latest completed image on its own thread. Publication uses `try_lock`, so
+the graphics thread never waits for the Qt consumer.
+
+This path includes a GPU-to-CPU copy. Readback is limited to a 1920×1080 bounding
+box while preserving the aspect ratio and avoiding upscaling. The additional
+canvas can have one extra frame of latency. The macOS IOSurface performance
+measurements below apply specifically to that implementation.
+
+The plugin does not modify OBS or other plugins. Rendering uses the public OBS
+31.1.0+ API. Integration into native preview slots also relies on Qt widget
+details; see [Limitations](#limitations).
+
+## Requirements
+
+- macOS 14 or later with the **OpenGL** renderer, Windows with **Direct3D 11**,
+  or Linux with **OpenGL 3.3** and `ARB_sync` support.
+- OBS Studio **31.1.0 or later**. Earlier versions lack the canvas API used by
+  the plugin. With Metal on macOS, the previews display an unsupported-renderer
+  message and do not render.
+- Linux release binaries use Ubuntu 24.04 as their baseline: glibc 2.39,
+  GCC 13's libstdc++, Qt 6.4, and libepoxy. Distributions with older libraries
+  require a source build or a package built for that distribution.
+- Optional: Vertical Canvas (Aitum) 1.6.x for the vertical preview.
+- To build: CMake 3.28+, Xcode 16+ on macOS, Visual Studio 2022/2026 with the C++
+  desktop workload on Windows, or GCC/Clang and Ninja on Linux.
+
+## Installation
+
+Download the appropriate package from
+[GitHub Releases](https://github.com/Neotecos/obs-optimized-previews/releases).
+Close OBS before installing or upgrading.
+
+### macOS
+
+Open the signed and notarized universal PKG. The same package includes Apple
+Silicon and Intel binaries and installs the plugin for the current user:
+
+```text
+~/Library/Application Support/obs-studio/plugins/obs-optimized-previews.plugin
 ```
 
-- Cada previsualización se dibuja **una vez por fotograma**, en el callback de
-  su propia mezcla (el render target actual es su textura), justo después de
-  componerse. No se vuelve a renderizar ninguna escena.
-- El escalado es una sola pasada de un shader mínimo directamente sobre la
-  IOSurface, con filtrado bilineal en espacio lineal y 4 muestras cuando se
-  reduce a la mitad o más. Las texturas de IOSurface de libobs no admiten ser
-  render target, así que el plugin usa FBOs propios con llamadas GL directas,
-  guardando y restaurando todo el estado que toca. En las mediciones, esta vía
-  costó tres veces menos que `glBlitFramebuffer` o que dibujar con libobs en
-  una textura intermedia (`tests/copy-probe.mm`).
-- Una superficie solo se reutiliza si su fence ya terminó, no es la publicada
-  ni la mostrada, y `IOSurfaceIsInUse()` indica que WindowServer ya no la
-  compone. Si no hay ninguna libre, se omite ese fotograma de la preview, nunca
-  el de OBS.
-- La textura del canvas vertical se identifica sin heurísticas de tamaño,
-  porque Source Record y las mezclas multipista pueden crear otras iguales.
-  Al enlazar una textura para dibujar, libobs-opengl siempre fija
-  `GL_TEXTURE_SRGB_DECODE_EXT` en ella. El plugin marca el candidato, dibuja el
-  canvas con la API pública `obs_render_canvas_texture_src_color_only()` en un
-  objetivo de 2×2 y comprueba si la marca cambió. Se repite cada 5 s y tras
-  cada `video_reset` del canvas.
-- La referencia fuerte al canvas vertical la tiene siempre el hilo principal.
-  Liberarla en el hilo gráfico, dentro del callback de render, interbloquearía
-  `mixes_mutex`.
-- No modifica OBS ni otros plugins. El renderizado usa solo API pública de
-  OBS 31.1.0 o posterior; la integración en el hueco de las previews nativas se apoya además
-  en detalles de Qt (ver [Limitaciones](#limitaciones)).
+For manual installation, copy the built `.plugin` bundle to that directory.
+The PKG has been tested successfully on ARM64; installation on Intel hardware
+has not yet been verified.
 
-## Requisitos
+### Windows
 
-- macOS 14 o posterior (Apple Silicon o Intel), Windows con Direct3D 11, o Linux con OpenGL 3.3 y soporte de sincronización ARB_sync.
-- En Linux, los binarios publicados usan Ubuntu 24.04 como base: glibc 2.39,
-  libstdc++ de GCC 13, Qt 6.4 y libepoxy. Para distribuciones con bibliotecas
-  anteriores, hay que recompilar el plugin o usar el paquete de su distribución.
-- OBS Studio 31.1.0 o posterior (probado con 31.1.0 y 33.0.1), En macOS requiere el
-  renderizador **OpenGL**. La API de canvas que usa el plugin no existe en
-  versiones anteriores. Con Metal,
-  las previsualizaciones muestran un aviso y no dibujan nada.
-- Opcional: Vertical Canvas (Aitum) 1.6.x para la previsualización vertical.
-- Para compilar: CMake 3.28+; Xcode 16+ en macOS, Visual Studio 2022/2026
-  con el workload C++ en Windows, o GCC/Clang y Ninja en Linux.
+Run the EXE matching **your OBS architecture**. The default installation root is:
 
-## Compilar y generar releases
+```text
+C:\ProgramData\obs-studio\plugins
+```
 
-Las releases se compilan contra el SDK de OBS **31.1.0**, con las dependencias
-oficiales de OBS del 23/05/2025. macOS y Windows las descargan y verifican con
-SHA-256. Los SDK y directorios de compilación están separados por arquitectura.
-Los bancos de pruebas son locales y están desactivados por defecto.
+The installer creates an `obs-optimized-previews` directory containing the DLL
+and resources. For portable OBS, select its `data/plugins` directory or extract
+the matching ZIP there. OBS and the plugin require the Visual C++ runtime for
+the corresponding architecture. The EXE installers are not Authenticode-signed.
 
-macOS universal (incluye ambas arquitecturas):
+Windows x64 has been confirmed working. Windows ARM64 has not yet been tested
+manually.
+
+### Linux
+
+Linux packages have not yet been tested manually. Choose the package matching
+your OBS architecture and ensure the system meets the library requirements.
+
+**Per-user installation with native OBS:** extract the TAR.GZ into
+`${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins`:
 
 ```sh
-export CODESIGN_IDENT="Developer ID Application: Tu identidad (TEAMID)"
-export PKG_SIGN_IDENT="Developer ID Installer: Tu identidad (TEAMID)"
-# Opcional: perfil de credenciales de notarytool ya guardado en el llavero.
-export NOTARY_PROFILE="mi-perfil"
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
+tar -xzf obs-optimized-previews-1.0.0-linux-x64.tar.gz \
+  -C "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
+```
+
+Replace `x64` with `arm64` as appropriate. The archive contains:
+
+```text
+obs-optimized-previews/
+├── bin/64bit/obs-optimized-previews.so
+└── data/
+    ├── locale/
+    └── manifest.json
+```
+
+OBS and Qt are supplied by the system. The `64bit` directory name is also used
+for ARM64; it does not identify an x64 binary.
+
+**Debian/Ubuntu and derivatives:** install the appropriate DEB with:
+
+```sh
+sudo apt install ./obs-optimized-previews_1.0.0_amd64.deb
+# For ARM64, use obs-optimized-previews_1.0.0_arm64.deb instead.
+```
+
+The DEB installs the module in `/usr/lib/obs-plugins` and its resources in
+`/usr/share/obs/obs-plugins/obs-optimized-previews`. `apt` checks the package's
+dependencies. Avoid installing both the per-user archive and the DEB.
+
+**OBS Flatpak:** requires an extension built for OBS's Flathub runtime. These
+native packages are not Flatpak extensions. Publishing a Flathub extension is a
+separate process; see the [official OBS plugin guide](https://obsproject.com/kb/plugins-guide).
+
+## Uninstallation
+
+- **Windows:** use Installed apps → Optimized Previews for OBS Studio.
+- **Linux DEB:** run `sudo apt remove obs-optimized-previews`.
+- **Linux TAR.GZ:** remove
+  `${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/obs-optimized-previews`.
+
+On macOS, with OBS closed:
+
+```sh
+rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
+```
+
+Preferences are preserved. To remove the macOS preferences as well:
+
+```sh
+rm -rf ~/Library/Application\ Support/obs-studio/plugin_config/obs-optimized-previews
+```
+
+## Configuration
+
+### Replacing native previews
+
+Right-click the OBS or Vertical Canvas preview and select **Use optimized
+preview (read-only)**. The plugin disables the native preview and places its
+own preview in the same slot. Uncheck the same option to restore the native
+preview.
+
+- The OBS preview is disabled through `obs_frontend_set_preview_enabled()`.
+  Vertical Canvas uses its public Show/Hide Preview hotkeys, which are also
+  accessible through obs-websocket.
+- The preference is saved and reapplied when OBS starts.
+- The horizontal replacement is unavailable in Studio Mode because OBS does
+  not allow that preview to be disabled there. The native preview reappears
+  while Studio Mode is active.
+- Re-enabling the native preview through another mechanism, such as a hotkey,
+  hides and stops the plugin preview. The preference remains saved for the
+  next OBS launch.
+
+### Automatic switching
+
+Open **Tools → Optimized previews…**. Four options are available, all disabled
+by default:
+
+- Switch to the optimized preview when streaming starts.
+- Switch to the optimized preview when recording starts.
+- Switch back to the native preview when streaming stops.
+- Switch back to the native preview when recording stops.
+
+These settings apply to both previews. Native previews are restored only when
+no OBS stream or recording remains active, to avoid reintroducing rendering
+lag into an ongoing output. Vertical Canvas's own streaming and recording
+outputs do not trigger these switches.
+
+### Separate docks
+
+Open **Docks → Optimized Preview** and **Docks → Optimized Aitum Vertical
+Preview** to use separate docks. This is also the fallback if a future OBS or
+Vertical Canvas update changes the native integration. Disable the native
+previews manually in that case. A dock displays a placeholder while its preview
+is embedded in the native slot.
+
+### Preview options and saved settings
+
+Right-click a plugin preview to choose:
+
+- **Use optimized preview (read-only):** replace the corresponding native preview.
+- **Frame rate limit:** the OBS frame rate, 60, 30, or 20 FPS.
+- **Canvas:** select the additional canvas for the vertical preview.
+
+Settings are stored in `plugin_config/obs-optimized-previews/settings.json`
+inside the OBS configuration directory. On macOS, the full path is:
+
+```text
+~/Library/Application Support/obs-studio/plugin_config/obs-optimized-previews/settings.json
+```
+
+A hidden preview stops rendering. Resources can be released after ten seconds
+of inactivity.
+
+## Building and packaging
+
+Release builds use the **OBS 31.1.0 SDK** and the official OBS dependencies from
+**May 23, 2025**. macOS and Windows download the dependencies and verify SHA-256
+hashes. SDKs and build directories are isolated by architecture. Local test
+programs are disabled by default.
+
+### macOS universal PKG
+
+```sh
+export CODESIGN_IDENT="Developer ID Application: Your Name (TEAMID)"
+export PKG_SIGN_IDENT="Developer ID Installer: Your Name (TEAMID)"
+# Optional: an existing notarytool credentials profile in your keychain.
+export NOTARY_PROFILE="your-profile"
 packaging/package-macos.sh
 ```
 
-El script verifica las dos arquitecturas y las firmas. Si se indica
-`NOTARY_PROFILE`, también envía a Apple, espera la aceptación y adjunta el ticket.
-Sin ese perfil el PKG está firmado, pero no notarizado. Para desarrollo:
-`cmake --preset macos` y `cmake --build --preset macos`. También existen
-`macos-x64` y `macos-universal`.
+The script builds and verifies both architectures, signs the plugin and PKG,
+and, when `NOTARY_PROFILE` is set, submits the installer to Apple, waits for
+acceptance, and staples the ticket. Without that profile, the PKG is signed but
+not notarized. Published PKG releases are notarized.
 
-Windows, desde PowerShell (Visual Studio con el SDK Windows 10.0.20348+ y
-herramientas de la arquitectura elegida; Inno Setup 6.4+):
+For development, use `cmake --preset macos` followed by
+`cmake --build --preset macos`. The `macos-x64` and `macos-universal` presets
+are also available.
+
+### Windows installers
+
+Use PowerShell with the Windows 10.0.20348+ SDK, the C++ tools for the target
+architecture, and Inno Setup 6.4+ installed:
 
 ```powershell
 ./packaging/package-windows.ps1 -Architecture x64
 ./packaging/package-windows.ps1 -Architecture arm64
 ```
 
-El instalador EXE instala DLL, manifiesto y traducciones en
-`C:\ProgramData\obs-studio\plugins\obs-optimized-previews`. El ZIP sirve para
-instalaciones portables. Los EXE no llevan firma Authenticode.
+Each invocation generates an EXE installer and a ZIP. Matching x64 Qt host tools
+are downloaded automatically for the ARM64 Qt package.
 
-Linux, en un entorno reproducible basado en Ubuntu 24.04:
+### Linux packages
+
+Build in the reproducible Ubuntu 24.04 environment:
 
 ```sh
 docker build -t op-linux-sdk -f packaging/linux.Dockerfile packaging
 docker run --rm -v "$PWD:/work" op-linux-sdk packaging/package-linux.sh
 ```
 
-Usa un host ARM64 para ARM64 o x64 para x64. Desde Docker Desktop también se
-puede añadir `--platform linux/arm64` o `--platform linux/amd64` a **ambos**
-comandos para compilar con emulación. En un sistema con el SDK de OBS ya
-instalado, Qt 6, libepoxy y Ninja: `packaging/package-linux.sh` (opcionalmente
-`-DCMAKE_PREFIX_PATH=/ruta/al/sdk`). El script genera ambos formatos.
+Use an ARM64 host for ARM64 or an x64 host for x64. With Docker Desktop, add
+`--platform linux/arm64` or `--platform linux/amd64` to **both** commands to
+build under emulation.
 
-Todos los artefactos quedan en `release/`. El workflow
-[Release builds](.github/workflows/release-builds.yml) compila las cinco
-combinaciones (macOS universal, Windows x64/ARM64, Linux x64/ARM64) y guarda
-artefactos de CI. La firma del PKG se realiza localmente usando el llavero;
-las claves privadas no se suben a CI. El workflow no publica releases.
+With the OBS SDK, Qt 6, libepoxy, and Ninja already installed, run
+`packaging/package-linux.sh`, optionally passing
+`-DCMAKE_PREFIX_PATH=/path/to/sdk`. The script creates both TAR.GZ and DEB files.
 
-### Bancos de pruebas
+### Continuous integration and release documentation
 
-Actívalos con `-DOP_BUILD_TESTS=ON` en macOS. Usan las bibliotecas de `/Applications/OBS.app`
-(libobs y OpenGL). Arrancan libobs sin interfaz y sin leer la configuración
-ni los perfiles de OBS. **No los ejecutes con OBS emitiendo**: los tres
-primeros añaden carga a la GPU.
+All generated packages are placed in `release/`. The
+[Release builds workflow](.github/workflows/release-builds.yml) builds all five
+targets and stores CI artifacts. Its manual dispatch can select one platform.
+PKG signing and notarization run locally using the keychain; private signing
+keys are not uploaded to CI. Publishing the GitHub release is a separate step.
 
-| Ejecutable | Qué comprueba |
+See the [changelog](CHANGELOG.md) and [v1.0.0 release notes](docs/releases/v1.0.0.md)
+for release details and the manual testing status.
+
+### Local test programs
+
+Enable available macOS test programs with `-DOP_BUILD_TESTS=ON`. They use libobs
+and OpenGL from `/Applications/OBS.app`, initialize libobs without the OBS UI,
+and do not read OBS profiles. **Do not run GPU tests while OBS is streaming:**
+the renderer, dock, and copy probes add GPU load. Test-only files are local
+development resources and are excluded from new commits.
+
+| Program | Coverage |
 |---|---|
-| `build_macos/RelWithDebInfo/op-render-test` | Orientación, color sRGB, tamaño, canvas vertical frente a un señuelo del mismo tamaño, `video_reset`, límite de FPS, retirada del canvas y coste por callback. |
-| `build_macos/RelWithDebInfo/op-dock-test` | La previsualización real en una ventana Qt durante 8 s: display link, `IOSurfaceIsInUse`, desacople del dock, latencia y cadencia. |
-| `build_macos/RelWithDebInfo/op-copy-probe` | Coste en el hilo gráfico de varias formas de copiar una textura. |
-| `build_macos/RelWithDebInfo/op-integration-test` | Integración en el hueco de la preview nativa con una réplica de los widgets de OBS y Vertical Canvas, y sin Vertical Canvas instalado. No usa la GPU. |
+| `op-render-test` | Orientation, sRGB color, dimensions, vertical canvas identification, `video_reset`, frame rate limits, canvas removal, and callback cost. |
+| `op-dock-test` | A real Qt preview window, display link behavior, IOSurface ownership, undocking, latency, and presentation cadence. |
+| `op-copy-probe` | Graphics-thread cost of alternative texture copy paths. |
+| `op-integration-test` | Native-slot and context-menu integration using representative OBS and Vertical Canvas widgets. |
+| `op-version-compare-test` | Release version comparison and update-response handling. |
 
-## Instalar
+With the `macos` preset, executables are placed in `build_macos/RelWithDebInfo/`.
 
-Cierra OBS antes de instalar o actualizar.
+## Measurement
 
-### macOS
+The macOS OBS profiler includes `op_rendered_callback`, `op_poll`,
+`op_preview_main`, `op_preview_vertical`, `op_verify_vertical_texture`, and
+`op_recreate_surfaces`. With native previews disabled, `render_displays`
+should take very little time.
 
-Abre el PKG universal firmado. Instala el bundle en
-`~/Library/Application Support/obs-studio/plugins/obs-optimized-previews.plugin`.
-Para instalación manual, copia allí el `.plugin` de la compilación.
+At shutdown, the plugin logs published frames, skipped frames, mean and maximum
+presentation latency, presented frames, superseded frames, and gaps exceeding
+1.5 frame intervals. On a 144 Hz display, 60 FPS video naturally alternates
+between two and three display refreshes per frame; a 120 Hz display can show
+each frame for exactly two refreshes.
 
-### Windows
+Original macOS measurements on an Apple M4 Max, with a 2560×1440 main canvas
+and a 1080×1920 vertical canvas, without a production OBS workload:
 
-Ejecuta el EXE de la **arquitectura de OBS**. El directorio predeterminado es
-`C:\ProgramData\obs-studio\plugins`. Si usas OBS portable, selecciona su
-carpeta `data/plugins` o extrae allí el ZIP. Se requiere el runtime de Visual
-C++ de la arquitectura correspondiente, que también necesita OBS.
-
-### Linux
-
-**Instalación por usuario, OBS nativo de cualquier distribución compatible:**
-extrae el TAR.GZ de tu arquitectura en `${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins`.
-
-```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
-tar -xzf obs-optimized-previews-0.1.0-linux-x64.tar.gz \
-  -C "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins"
-```
-
-Sustituye `x64` por `arm64` cuando corresponda. El archivo contiene
-`obs-optimized-previews/bin/64bit/obs-optimized-previews.so` y
-`obs-optimized-previews/data/`. No incluye OBS ni Qt, que debe aportar el sistema.
-La ruta `64bit` también se utiliza en ARM64; no significa que sea código x64.
-
-**Debian/Ubuntu y derivados:** instala el DEB correspondiente con
-`sudo apt install ./obs-optimized-previews_0.1.0_amd64.deb` (o `_arm64.deb`).
-Instala el módulo en `/usr/lib/obs-plugins` y sus recursos en
-`/usr/share/obs/obs-plugins/obs-optimized-previews`; `apt` comprueba sus dependencias.
-No instales simultáneamente la copia por usuario y la del DEB.
-
-**OBS Flatpak:** requiere una extensión compilada para el runtime de OBS en
-Flathub; estos paquetes nativos no son una extensión Flatpak. No copies el
-DEB ni el TAR.GZ dentro del sandbox. La publicación en Flathub es un proceso
-separado. Es la distinción que hace la [guía oficial de plugins de OBS](https://obsproject.com/kb/plugins-guide).
-
-## Desinstalar
-
-En Windows, usa Aplicaciones instaladas → Optimized Previews for OBS Studio.
-En Linux, `sudo apt remove obs-optimized-previews` si usaste DEB, o borra
-`${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/plugins/obs-optimized-previews`
-si usaste TAR.GZ. Las preferencias se conservan.
-
-En macOS, con OBS cerrado:
-
-```sh
-rm -rf ~/Library/Application\ Support/obs-studio/plugins/obs-optimized-previews.plugin
-```
-
-Para borrar también sus opciones guardadas:
-
-```sh
-rm -rf ~/Library/Application\ Support/obs-studio/plugin_config/obs-optimized-previews
-```
-
-## Configurar
-
-### En el lugar de la previsualización nativa (recomendado)
-
-Clic derecho sobre la previsualización de OBS o sobre la de Vertical Canvas
-→ **Usar previsualización optimizada (solo lectura)**. El plugin desactiva
-esa preview nativa y pone la suya en el mismo hueco. Para volver a la nativa,
-clic derecho sobre la del plugin y desmarca la misma opción.
-
-- La de OBS se desactiva con `obs_frontend_set_preview_enabled()`, y la de
-  Vertical Canvas con sus atajos «Mostrar/Ocultar previsualización» (los
-  mismos que se pueden lanzar desde obs-websocket).
-- La elección se guarda y se reaplica al abrir OBS.
-- En modo estudio no está disponible para la horizontal: OBS no permite
-  desactivar su previsualización en ese modo. Si estaba activa, la nativa
-  reaparece mientras dure el modo estudio.
-- Si reactivas la nativa por otra vía (un atajo, por ejemplo), la del plugin
-  deja de verse y de dibujar, pero la preferencia se conserva y se reaplica la
-  próxima vez que abras OBS.
-
-### Cambio automático (Herramientas → Previsualizaciones optimizadas…)
-
-Cuatro casillas, todas desactivadas por defecto:
-
-- Cambiar a la previsualización optimizada al iniciar la retransmisión.
-- Cambiar a la previsualización optimizada al iniciar la grabación.
-- Volver a la previsualización nativa al terminar la retransmisión.
-- Volver a la previsualización nativa al terminar la grabación.
-
-Se aplican a las dos previsualizaciones. Solo se vuelve a la nativa cuando no
-queda ninguna retransmisión ni grabación de OBS en curso, para no reintroducir
-pérdidas de fotogramas en la que siga activa. Las salidas propias de Vertical
-Canvas (su retransmisión y grabación) no activan estos cambios.
-
-### En docks propios
-
-**Docks → Optimized Preview** y **Docks → Optimized Aitum Vertical Preview**
-(en español, «Previsualización optimizada» y «Previsualización vertical de
-Aitum optimizada»). Úsalos si prefieres otra disposición o si la integración
-deja de funcionar con una versión futura de OBS o de Vertical Canvas. En ese
-caso, desactiva a mano la preview de OBS (clic derecho → desmarca
-**Habilitar previsualización**) y la de Vertical Canvas. Mientras una
-previsualización está integrada, su dock muestra un aviso.
-
-### Opciones de cada previsualización
-
-Clic derecho sobre una previsualización del plugin:
-
-- **Usar previsualización optimizada (solo lectura):** ver arriba.
-- **Límite de fotogramas:** igual que OBS, 60, 30 o 20 FPS.
-- **Canvas** (solo en la vertical): elige el canvas que se muestra.
-
-Todas las opciones se guardan en
-`~/Library/Application Support/obs-studio/plugin_config/obs-optimized-previews/settings.json`.
-
-Una previsualización oculta (dock cerrado o en una pestaña no visible) no
-dibuja nada; pasados 10 s, libera sus superficies.
-
-## Medir
-
-En el log de OBS:
-
-- En el perfil al cerrar OBS: `op_rendered_callback` (todo el trabajo del
-  plugin al terminar cada mezcla), `op_poll` (comprobación de fences al
-  empezar cada mezcla), y dentro de ellas `op_preview_main`,
-  `op_preview_vertical`, `op_verify_vertical_texture` y
-  `op_recreate_surfaces`. Con las previews nativas apagadas,
-  `render_displays` debería quedar prácticamente a cero.
-- Al cerrar OBS, dos líneas por previsualización:
-  - fotogramas publicados, fotogramas sin superficie libre y latencia media y
-    máxima desde la composición hasta Core Animation;
-  - fotogramas entregados a Core Animation, fotogramas sustituidos antes de
-    mostrarse (llegaron dos entre dos refrescos de pantalla) y huecos de más de
-    1,5 fotogramas entre imágenes nuevas.
-
-Si notas saltos, esas cifras dicen si son descartes del plugin. A 60 FPS en
-una pantalla de 144 Hz cada fotograma dura 2 o 3 refrescos alternos
-(144/60 = 2,4), y ese ritmo irregular también afecta a la preview nativa.
-A 120 Hz cada fotograma dura exactamente 2 refrescos.
-
-Resultados del banco de pruebas en un Mac con Apple M4 Max (lienzo
-2560×1440 y canvas vertical de 1080×1920, sin carga de OBS):
-
-| Medida | Valor |
+| Measurement | Result |
 |---|---:|
-| Coste por callback, mediana | 20–25 µs |
-| Coste por callback, p99 | 0,17–0,47 ms |
-| Latencia hasta Core Animation, media | 19–22 ms |
+| Median callback cost | 20–25 µs |
+| p99 callback cost | 0.17–0.47 ms |
+| Mean latency to Core Animation | 19–22 ms |
 
-## Limitaciones
+## Limitations
 
-- macOS y Linux requieren OpenGL; Windows requiere Direct3D 11. En macOS con
-  Metal, las previews no se dibujan.
-- En la vía IOSurface de macOS: SDR; con un lienzo HDR (Rec. 2100), la imagen no se adapta con tonemapping
-  como en la preview de OBS.
-- Solo visualización: no se pueden seleccionar ni mover fuentes, ni hay
-  guías, zonas seguras o modo estudio.
-- El escalado es bilineal (con 4 muestras al reducir a la mitad o más), igual
-  que la previsualización de OBS.
-- En macOS, la identificación del canvas vertical se basa en un comportamiento de
-  libobs-opengl (el parámetro sRGB que fija al enlazar texturas), no en una
-  función documentada. Si una versión futura lo cambia, la preview vertical
-  dejará de dibujarse y el log mostrará «no se identifica la textura del
-  canvas vertical». OBS no se verá afectado.
-- Latencia: la imagen sale aproximadamente 1–1,5 fotogramas detrás de la
-  composición, más el refresco del monitor.
-- La integración en el hueco nativo depende de detalles internos de Qt
-  (nombres y clases de widgets de OBS 33 y Vertical Canvas 1.6.x, y de cómo
-  abren sus menús contextuales), no de API pública. Si una actualización los
-  cambia, la opción no aparece en el menú nativo y las previews del plugin
-  siguen en sus docks.
-- OBS tiene una carrera interna al cambiar la resolución de un canvas
-  (`obs_canvas_reset_video()` pone `canvas->mix` a NULL fuera del mutex).
-  El plugin evita leer la mezcla en cada fotograma, pero la verificación
-  ocasional usa la misma API que la preview de Vertical Canvas.
+- macOS and Linux require OpenGL; Windows requires Direct3D 11. Metal previews
+  on macOS are unsupported.
+- The macOS IOSurface path is SDR. HDR canvases are not tone-mapped in the same
+  way as the native OBS preview.
+- Previews are read-only: there are no source selection handles, guides,
+  safe areas, or Studio Mode editing controls.
+- macOS scaling uses bilinear filtering with four samples for reductions of
+  2:1 or greater. Windows and Linux also incur a CPU readback cost and have a
+  1920×1080 readback bounding box.
+- On macOS, vertical texture identification relies on libobs-opengl's sRGB
+  binding behavior. If that changes, the vertical preview can stop rendering
+  while OBS continues working normally.
+- The original macOS path adds roughly 1–1.5 video frames of latency plus the
+  display refresh. Additional latency is possible on the portable path.
+- Native-slot integration depends on internal Qt widget names, classes, and
+  context-menu behavior in OBS 33 and Vertical Canvas 1.6.x. If these change,
+  the menu option may disappear and the plugin previews remain in their docks.
+- OBS has an internal race during canvas resolution changes:
+  `obs_canvas_reset_video()` resets `canvas->mix` outside the mutex. The macOS
+  path avoids reading that mix every frame, but occasional verification uses
+  the same API as the Vertical Canvas preview.
+- Manual verification remains pending for Intel macOS, Windows ARM64, and Linux;
+  see [Testing status](#testing-status).
 
-## Licencia
+## License
 
-GPL-2.0 o posterior (como OBS Studio). Basado en
+GPL-2.0 or later, like OBS Studio. Based on
 [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate).
