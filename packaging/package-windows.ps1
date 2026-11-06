@@ -31,7 +31,13 @@ $iscc = if ($isccCommand) { $isccCommand.Source } else { "${env:ProgramFiles(x86
 if ($LASTEXITCODE) { throw 'Installer generation failed' }
 $installer = Join-Path $out "obs-optimized-previews_${version}_windows-${Architecture}.exe"
 $installerVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($installer)
-if ($installerVersion.ProductVersion -ne "v$version") { throw "Installer product version does not match v$version" }
+$expectedVersion = [version]$version
+Write-Output "Installer metadata: ProductVersion=$($installerVersion.ProductVersion); FileVersion=$($installerVersion.FileVersion)"
+if ($installerVersion.ProductMajorPart -ne $expectedVersion.Major -or
+    $installerVersion.ProductMinorPart -ne $expectedVersion.Minor -or
+    $installerVersion.ProductBuildPart -ne $expectedVersion.Build) {
+  throw "Installer numeric product version does not match $version"
+}
 # Exercise the actual Installed Apps entry on disposable CI runners.
 if ($env:CI -eq 'true') {
   $testRoot = Join-Path ([IO.Path]::GetTempPath()) "op-install-$Architecture"
