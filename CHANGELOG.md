@@ -9,7 +9,7 @@ First stable release of Optimized Previews for OBS Studio 31.1.0 and later.
 - Automatic switching when OBS starts or stops streaming or recording.
 - Per-preview frame rate limits, saved preferences, and update checks.
 - macOS ARM64 and Intel x64 in one signed and notarized universal PKG.
-- Windows x64 and ARM64 EXE installers and portable ZIP packages.
+- Windows x64 and ARM64 EXE installers.
 - Linux x64 and ARM64 TAR.GZ archives and Debian/Ubuntu DEB packages.
 - English project documentation and explicit platform testing status.
 

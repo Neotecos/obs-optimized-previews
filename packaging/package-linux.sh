@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 case $(uname -m) in
-  x86_64) arch=x64 ;;
-  aarch64|arm64) arch=arm64 ;;
+  x86_64) arch=x64; package_arch=amd64 ;;
+  aarch64|arm64) arch=arm64; package_arch=arm64 ;;
   *) echo 'Only x64 and ARM64 are supported' >&2; exit 1 ;;
 esac
 version=$(python3 -c 'import json; print(json.load(open("buildspec.json"))["version"])')
@@ -23,6 +23,6 @@ cp "$build/stage/usr/lib/obs-plugins/obs-optimized-previews.so" "$plugin/bin/64b
 cp -R data/locale "$plugin/data/"
 cp "$build/manifest.json" "$plugin/data/"
 cp LICENSE "$plugin/data/"
-archive="release/obs-optimized-previews-$version-linux-$arch.tar.gz"
+archive="release/obs-optimized-previews_${version}_linux-${package_arch}.tar.gz"
 tar -czf "$archive" -C "$root" obs-optimized-previews
 sha256sum "$archive" > "$archive.sha256"

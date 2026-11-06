@@ -44,7 +44,7 @@ cat > "$root/distribution.xml" <<XML
   <pkg-ref id="com.alekstyle.obs.optimized-previews" version="$version">component.pkg</pkg-ref>
 </installer-gui-script>
 XML
-output="release/obs-optimized-previews-$version-macos-universal.pkg"
+output="release/obs-optimized-previews_${version}_macos-universal.pkg"
 productbuild --distribution "$root/distribution.xml" --package-path "$root" --sign "$PKG_SIGN_IDENT" "$output"
 pkgutil --check-signature "$output"
 # Credentials stay in the keychain, never in the repository or build logs.
